@@ -67,7 +67,10 @@ async function reviewFile(
   if (!parsed.success) return [];
   return parsed.data.findings.flatMap((candidate) => {
     const finding = modelFinding.safeParse(candidate);
-    return finding.success ? [{ ...finding.data, file: file.path }] : [];
+    if (!finding.success) return [];
+    const { securityReference, ...rest } = finding.data;
+    // A Security Reference only belongs on a Security Issue.
+    return [{ ...rest, ...(rest.kind === "security-issue" && securityReference && { securityReference }), file: file.path }];
   });
 }
 

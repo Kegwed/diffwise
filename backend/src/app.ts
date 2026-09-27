@@ -30,7 +30,12 @@ export function createApp({ forge, modelProvider, model, db }: AppDependencies) 
     if (!pullRequest) {
       return c.json<ApiError>({ error: `Pull Request ${ref.owner}/${ref.repo}#${ref.number} not found` }, 404);
     }
-    const review = await runReview(pullRequest, model, modelProvider);
+    let review: Review;
+    try {
+      review = await runReview(pullRequest, model, modelProvider);
+    } catch (error) {
+      return c.json<ApiError>({ error: `The Model Provider failed: ${(error as Error).message}` }, 502);
+    }
     saveReview(db, review);
     return c.json<Review>(review, 201);
   });

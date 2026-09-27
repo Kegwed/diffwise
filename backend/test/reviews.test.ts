@@ -40,14 +40,14 @@ const sqlInjection = {
 };
 
 function setup(pullRequests: PullRequestSnapshot[], modelResponses: unknown[]) {
-  const model = fakeModelProvider(modelResponses);
+  const modelProvider = fakeModelProvider(modelResponses);
   const app = createApp({
     forge: fixtureForge(pullRequests),
-    modelProvider: model.provider,
+    modelProvider: modelProvider.provider,
     model: "test-model",
     db: openDatabase(":memory:"),
   });
-  return { app, modelRequests: model.requests };
+  return { app, modelRequests: modelProvider.requests };
 }
 
 async function startReview(app: ReturnType<typeof createApp>, pr: PullRequestSnapshot) {
@@ -159,6 +159,25 @@ describe("Reviews", () => {
     expect(listed).toEqual([
       { owner: "acme", repo: "shop", number: 7, title: "Add user lookup", author: "octocat", headCommit: "abc1234" },
     ]);
+  });
+
+  test("a Security Reference on a Bad Practice is dropped", async () => {
+    const { app } = setup([pullRequest], [{ findings: [{ ...sqlInjection, kind: "bad-practice" }] }]);
+
+    const review = (await (await startReview(app, pullRequest)).json()) as Review;
+
+    expect(review.findings[0]).not.toHaveProperty("securityReference");
+  });
+
+  test("an unreachable Model Provider fails the Review with a clear error", async () => {
+    const { app } = setup([pullRequest], []);
+
+    const started = await startReview(app, pullRequest);
+
+    expect(started.status).toBe(502);
+    expect(await started.json()).toEqual({
+      error: expect.stringContaining("fake Model Provider ran out of responses"),
+    });
   });
 
   test("a reply that isn't JSON yields no Findings for that file", async () => {
