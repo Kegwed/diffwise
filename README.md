@@ -1,0 +1,55 @@
+# Diffwise
+
+A self-hosted AI Pull Request reviewer. Diffwise reads a Pull Request's changes and reports Bad Practices and Security Issues, using a Model you choose (for example a local one through Ollama). See [CONTEXT.md](CONTEXT.md) for the vocabulary.
+
+> **Status: walking skeleton.** Diffwise currently reviews built-in fixture Pull Requests (no GitHub connection yet), with a single Model set by an environment variable.
+
+## Running it with Ollama
+
+You need Node.js 24+ and [Ollama](https://ollama.com).
+
+1. Start Ollama and pull a Model. Code-focused models work best; larger ones find more:
+
+   ```sh
+   ollama serve            # skip if the Ollama app is already running
+   ollama pull qwen2.5-coder:7b
+   ```
+
+2. Install dependencies and tell Diffwise which Model to use:
+
+   ```sh
+   npm install
+   cp .env.example .env    # then edit DIFFWISE_MODEL if you pulled a different Model
+   ```
+
+3. Start the backend and frontend:
+
+   ```sh
+   npm run dev
+   ```
+
+4. Open http://localhost:5173, pick the fixture Pull Request and click **Review**. Each changed file is sent to the Model separately, so a Review takes a little while on a local Model. The Findings appear grouped by file when it's finished.
+
+### Configuration
+
+Set these in `.env` at the repo root, or in the environment:
+
+| Variable              | Default                     | Meaning                                         |
+| --------------------- | --------------------------- | ----------------------------------------------- |
+| `DIFFWISE_MODEL`      | (required)                  | The Model that runs every Review                |
+| `DIFFWISE_OLLAMA_URL` | `http://localhost:11434/v1` | Ollama's OpenAI-compatible endpoint             |
+| `DIFFWISE_PORT`       | `3001`                      | Backend port (the frontend proxies `/api` to it) |
+| `DIFFWISE_DB`         | `diffwise.db` at repo root  | SQLite file where Reviews are saved             |
+
+## Development
+
+```sh
+npm test            # backend and frontend tests
+npm run typecheck   # all workspaces
+```
+
+The workspace has three packages:
+
+- `shared`: the API contract types (Pull Request summary, Review, Finding), used by both sides.
+- `backend`: a Hono HTTP API. The Review Engine depends only on the `Forge` and `ModelProvider` ports. Tests drive the API with the fixture Forge, a scripted fake Model Provider and in-memory SQLite.
+- `frontend`: React + Vite. Tests render the app with React Testing Library against fixture API responses.
