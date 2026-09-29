@@ -11,9 +11,11 @@ export interface AppDependencies {
   /** The Model every Review runs on. */
   model: string;
   db: Database;
+  /** How long to wait for one Model call before giving up on it; defaults to DEFAULT_MODEL_CALL_TIMEOUT_MS. */
+  modelCallTimeoutMs?: number;
 }
 
-export function createApp({ forge, modelProvider, model, db }: AppDependencies) {
+export function createApp({ forge, modelProvider, model, db, modelCallTimeoutMs }: AppDependencies) {
   const app = new Hono();
 
   app.get("/api/pull-requests", async (c) => {
@@ -30,12 +32,7 @@ export function createApp({ forge, modelProvider, model, db }: AppDependencies) 
     if (!pullRequest) {
       return c.json<ApiError>({ error: `Pull Request ${ref.owner}/${ref.repo}#${ref.number} not found` }, 404);
     }
-    let review: Review;
-    try {
-      review = await runReview(pullRequest, model, modelProvider);
-    } catch (error) {
-      return c.json<ApiError>({ error: `The Model Provider failed: ${(error as Error).message}` }, 502);
-    }
+    const review = await runReview(pullRequest, model, modelProvider, { modelCallTimeoutMs });
     saveReview(db, review);
     return c.json<Review>(review, 201);
   });

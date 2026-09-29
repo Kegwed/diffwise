@@ -28,7 +28,7 @@ You need Node.js 24+ and [Ollama](https://ollama.com).
    npm run dev
    ```
 
-4. Open http://localhost:5173, pick the fixture Pull Request and click **Review**. Each changed file is sent to the Model separately, so a Review takes a little while on a local Model. The Findings appear grouped by file when it's finished.
+4. Open http://localhost:5173, pick the fixture Pull Request and click **Review**. Each changed file is sent to the Model separately, so a Review takes a little while on a local Model. The Findings appear grouped by file when it's finished, along with each file's File Outcome: reviewed, skipped (lockfiles, minified assets, build output, binaries and very large diffs are never sent to the Model) or failed (the Model's reply was invalid or the call errored or timed out, twice). A Review with any skipped or failed file is flagged as having incomplete coverage.
 
 ### Configuration
 
@@ -50,6 +50,6 @@ npm run typecheck   # all workspaces
 
 The workspace has three packages:
 
-- `shared`: the API contract types (Pull Request summary, Review, Finding), used by both sides.
+- `shared`: the API contract types (Pull Request summary, Review, File Outcome, Finding), used by both sides.
 - `backend`: a Hono HTTP API. The Review Engine depends only on the `Forge` and `ModelProvider` ports. Tests drive the API with the fixture Forge, a scripted fake Model Provider and in-memory SQLite.
 - `frontend`: React + Vite. Tests render the app with React Testing Library against fixture API responses.

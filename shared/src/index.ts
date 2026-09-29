@@ -33,12 +33,19 @@ export interface Finding {
   securityReference?: string;
 }
 
+/** What happened to one changed file within a Review. */
+export type FileOutcome =
+  | { file: string; outcome: "reviewed" }
+  | { file: string; outcome: "skipped" | "failed"; reason: string };
+
 export interface Review {
   id: string;
   pullRequest: PullRequestRef;
   headCommit: string;
   model: string;
   createdAt: string;
+  /** One per changed file, in the Pull Request's file order. */
+  fileOutcomes: FileOutcome[];
   findings: Finding[];
 }
 

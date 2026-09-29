@@ -8,6 +8,8 @@ export interface ChatRequest {
   messages: ChatMessage[];
   /** JSON Schema the response must follow. */
   responseSchema: Record<string, unknown>;
+  /** Aborted when the Review stops waiting for the reply. */
+  signal?: AbortSignal;
 }
 
 /** A source of language models that can run Reviews. */

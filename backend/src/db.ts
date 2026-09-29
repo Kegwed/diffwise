@@ -1,5 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
-import type { Finding, FindingKind, Review, Severity } from "@diffwise/shared";
+import type { FileOutcome, Finding, FindingKind, Review, Severity } from "@diffwise/shared";
 
 export type Database = DatabaseSync;
 
@@ -31,6 +31,14 @@ export function openDatabase(path: string): Database {
       security_reference TEXT,
       PRIMARY KEY (review_id, position)
     );
+    CREATE TABLE IF NOT EXISTS file_outcomes (
+      review_id TEXT NOT NULL REFERENCES reviews(id),
+      position INTEGER NOT NULL,
+      file TEXT NOT NULL,
+      outcome TEXT NOT NULL,
+      reason TEXT,
+      PRIMARY KEY (review_id, position)
+    );
   `);
   return db;
 }
@@ -43,10 +51,16 @@ export function saveReview(db: Database, review: Review): void {
     `INSERT INTO findings (review_id, position, kind, severity, file, start_line, end_line, title, explanation, suggested_fix, security_reference)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
+  const insertFileOutcome = db.prepare(
+    "INSERT INTO file_outcomes (review_id, position, file, outcome, reason) VALUES (?, ?, ?, ?, ?)",
+  );
   const { owner, repo, number } = review.pullRequest;
   db.exec("BEGIN");
   try {
     insertReview.run(review.id, owner, repo, number, review.headCommit, review.model, review.createdAt);
+    review.fileOutcomes.forEach((o, position) => {
+      insertFileOutcome.run(review.id, position, o.file, o.outcome, o.outcome === "reviewed" ? null : o.reason);
+    });
     review.findings.forEach((f, position) => {
       insertFinding.run(
         review.id,
@@ -79,6 +93,12 @@ interface ReviewRow {
   created_at: string;
 }
 
+interface FileOutcomeRow {
+  file: string;
+  outcome: FileOutcome["outcome"];
+  reason: string | null;
+}
+
 interface FindingRow {
   kind: FindingKind;
   severity: Severity;
@@ -94,6 +114,9 @@ interface FindingRow {
 export function getReview(db: Database, id: string): Review | undefined {
   const row = db.prepare("SELECT * FROM reviews WHERE id = ?").get(id) as ReviewRow | undefined;
   if (!row) return undefined;
+  const fileOutcomeRows = db
+    .prepare("SELECT * FROM file_outcomes WHERE review_id = ? ORDER BY position")
+    .all(id) as unknown as FileOutcomeRow[];
   const findingRows = db
     .prepare("SELECT * FROM findings WHERE review_id = ? ORDER BY position")
     .all(id) as unknown as FindingRow[];
@@ -103,8 +126,15 @@ export function getReview(db: Database, id: string): Review | undefined {
     headCommit: row.head_commit,
     model: row.model,
     createdAt: row.created_at,
+    fileOutcomes: fileOutcomeRows.map(toFileOutcome),
     findings: findingRows.map(toFinding),
   };
+}
+
+function toFileOutcome(row: FileOutcomeRow): FileOutcome {
+  return row.outcome === "reviewed"
+    ? { file: row.file, outcome: row.outcome }
+    : { file: row.file, outcome: row.outcome, reason: row.reason ?? "" };
 }
 
 function toFinding(row: FindingRow): Finding {

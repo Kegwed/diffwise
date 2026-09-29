@@ -19,6 +19,10 @@ const review: Review = {
   headCommit: "abc1234def",
   model: "llama3.1:8b",
   createdAt: "2026-09-27T10:00:00.000Z",
+  fileOutcomes: [
+    { file: "src/users.ts", outcome: "reviewed" },
+    { file: "src/config.ts", outcome: "reviewed" },
+  ],
   findings: [
     {
       kind: "security-issue",
@@ -53,10 +57,10 @@ const review: Review = {
 };
 
 /** Stubs fetch with the backend's API responses. */
-function stubApi() {
+function stubApi(startedReview: Review = review) {
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
     if (url === "/api/pull-requests") return Response.json([pullRequest]);
-    if (url === "/api/reviews" && init?.method === "POST") return Response.json(review, { status: 201 });
+    if (url === "/api/reviews" && init?.method === "POST") return Response.json(startedReview, { status: 201 });
     return Response.json({ error: "not found" }, { status: 404 });
   });
   vi.stubGlobal("fetch", fetch);
@@ -103,4 +107,45 @@ test("a Review with no Findings says so", async () => {
   await userEvent.click(await screen.findByRole("button", { name: /review/i }));
 
   expect(await screen.findByText(/no findings/i)).toBeInTheDocument();
+});
+
+test("each file shows its outcome, and skipped or failed files flag the Review's coverage as incomplete", async () => {
+  stubApi({
+    ...review,
+    fileOutcomes: [
+      { file: "package-lock.json", outcome: "skipped", reason: "Lockfile" },
+      { file: "src/users.ts", outcome: "reviewed" },
+      { file: "src/config.ts", outcome: "reviewed" },
+      { file: "src/report.ts", outcome: "failed", reason: "Failed twice. First attempt: the Model's reply was not valid JSON. Retry: the Model's reply was not valid JSON." },
+    ],
+  });
+  render(<App />);
+
+  await userEvent.click(await screen.findByRole("button", { name: /review/i }));
+
+  const users = await screen.findByRole("region", { name: "src/users.ts" });
+  expect(within(users).getByText("Reviewed")).toBeInTheDocument();
+
+  const lockfile = screen.getByRole("region", { name: "package-lock.json" });
+  expect(within(lockfile).getByText("Skipped")).toBeInTheDocument();
+  expect(within(lockfile).getByText("Lockfile")).toBeInTheDocument();
+
+  const report = screen.getByRole("region", { name: "src/report.ts" });
+  expect(within(report).getByText("Failed")).toBeInTheDocument();
+  expect(within(report).getByText(/not valid JSON/)).toBeInTheDocument();
+
+  const notice = screen.getByRole("note");
+  expect(notice).toHaveTextContent(/incomplete coverage/i);
+  expect(notice).toHaveTextContent(/1 file skipped/i);
+  expect(notice).toHaveTextContent(/1 file failed/i);
+});
+
+test("a Review whose every file was reviewed has no incomplete-coverage notice", async () => {
+  stubApi();
+  render(<App />);
+
+  await userEvent.click(await screen.findByRole("button", { name: /review/i }));
+
+  await screen.findByRole("region", { name: "src/users.ts" });
+  expect(screen.queryByRole("note")).not.toBeInTheDocument();
 });

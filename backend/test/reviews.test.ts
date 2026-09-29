@@ -4,7 +4,7 @@ import { createApp } from "../src/app.ts";
 import { openDatabase } from "../src/db.ts";
 import type { PullRequestSnapshot } from "../src/forge.ts";
 import { fixtureForge } from "../src/fixture-forge.ts";
-import { fakeModelProvider } from "./fakes.ts";
+import { fakeModelProvider, hang } from "./fakes.ts";
 
 const pullRequest: PullRequestSnapshot = {
   owner: "acme",
@@ -39,13 +39,14 @@ const sqlInjection = {
   securityReference: "CWE-89",
 };
 
-function setup(pullRequests: PullRequestSnapshot[], modelResponses: unknown[]) {
+function setup(pullRequests: PullRequestSnapshot[], modelResponses: unknown[], modelCallTimeoutMs?: number) {
   const modelProvider = fakeModelProvider(modelResponses);
   const app = createApp({
     forge: fixtureForge(pullRequests),
     modelProvider: modelProvider.provider,
     model: "test-model",
     db: openDatabase(":memory:"),
+    modelCallTimeoutMs,
   });
   return { app, modelRequests: modelProvider.requests };
 }
@@ -74,29 +75,38 @@ describe("Reviews", () => {
       pullRequest: { owner: "acme", repo: "shop", number: 7 },
       headCommit: "abc1234",
       model: "test-model",
+      fileOutcomes: [{ file: "src/users.ts", outcome: "reviewed" }],
       findings: [{ ...sqlInjection, file: "src/users.ts" }],
     });
   });
 
-  test("Findings that don't match the Finding schema are dropped", async () => {
-    const { app } = setup(
+  test.each([
+    ["an unknown kind", { ...sqlInjection, kind: "typo" }],
+    ["an unknown Severity", { ...sqlInjection, severity: "catastrophic" }],
+    ["a missing field", { ...sqlInjection, title: undefined }],
+    ["a mistyped field", { ...sqlInjection, startLine: "three" }],
+  ])("a reply with a Finding with %s is invalid and retried", async (_, invalidFinding) => {
+    const { app, modelRequests } = setup(
       [pullRequest],
-      [
-        {
-          findings: [
-            { ...sqlInjection, kind: "typo" },
-            { ...sqlInjection, severity: "catastrophic" },
-            { ...sqlInjection, title: undefined },
-            { ...sqlInjection, startLine: "three" },
-            { ...sqlInjection, startLine: 4, endLine: 3 },
-            sqlInjection,
-          ],
-        },
-      ],
+      [{ findings: [invalidFinding, sqlInjection] }, { findings: [sqlInjection] }],
     );
 
     const review = (await (await startReview(app, pullRequest)).json()) as Review;
 
+    expect(modelRequests).toHaveLength(2);
+    expect(review.fileOutcomes).toEqual([{ file: "src/users.ts", outcome: "reviewed" }]);
+    expect(review.findings).toEqual([{ ...sqlInjection, file: "src/users.ts" }]);
+  });
+
+  test("a Finding whose line range ends before it starts is dropped", async () => {
+    const { app, modelRequests } = setup(
+      [pullRequest],
+      [{ findings: [{ ...sqlInjection, startLine: 4, endLine: 3 }, sqlInjection] }],
+    );
+
+    const review = (await (await startReview(app, pullRequest)).json()) as Review;
+
+    expect(modelRequests).toHaveLength(1);
     expect(review.findings).toEqual([{ ...sqlInjection, file: "src/users.ts" }]);
   });
 
@@ -125,6 +135,77 @@ describe("Reviews", () => {
       { ...sqlInjection, file: "src/users.ts" },
       { ...hardCodedSecret, file: "src/config.ts" },
     ]);
+  });
+
+  test("files on the skip list are never sent to the Model and are skipped with a reason", async () => {
+    const withSkippable: PullRequestSnapshot = {
+      ...pullRequest,
+      files: [
+        { path: "package-lock.json", patch: '@@ -1 +1 @@\n-"a"\n+"b"' },
+        pullRequest.files[0]!,
+        { path: "web/vendor/app.min.js", patch: "@@ -0,0 +1 @@\n+var a=1;" },
+        { path: "dist/index.js", patch: "@@ -0,0 +1 @@\n+export {};" },
+        { path: "assets/logo.png", patch: "" },
+        { path: "assets/icon.xyz", patch: "" },
+        { path: "src/build/steps.ts", patch: "@@ -0,0 +1 @@\n+export const steps = [];" },
+      ],
+    };
+    const { app, modelRequests } = setup([withSkippable], [{ findings: [sqlInjection] }, { findings: [] }]);
+
+    const review = (await (await startReview(app, withSkippable)).json()) as Review;
+
+    expect(modelRequests).toHaveLength(2);
+    expect(modelRequests[0]!.messages.map((m) => m.content).join("\n")).toContain("src/users.ts");
+    expect(review.fileOutcomes).toEqual([
+      { file: "package-lock.json", outcome: "skipped", reason: expect.stringMatching(/lockfile/i) },
+      { file: "src/users.ts", outcome: "reviewed" },
+      { file: "web/vendor/app.min.js", outcome: "skipped", reason: expect.stringMatching(/minified/i) },
+      { file: "dist/index.js", outcome: "skipped", reason: expect.stringMatching(/build output/i) },
+      { file: "assets/logo.png", outcome: "skipped", reason: expect.stringMatching(/binary/i) },
+      { file: "assets/icon.xyz", outcome: "skipped", reason: expect.stringMatching(/no diff/i) },
+      { file: "src/build/steps.ts", outcome: "reviewed" },
+    ]);
+    expect(review.findings).toEqual([{ ...sqlInjection, file: "src/users.ts" }]);
+  });
+
+  test("a file over the size limit is never sent to the Model and is skipped with a reason", async () => {
+    const hugeLines = Array.from({ length: 20_000 }, (_, i) => `+export const value${i} = ${i};`);
+    const withHugeFile: PullRequestSnapshot = {
+      ...pullRequest,
+      files: [{ path: "src/generated.ts", patch: [`@@ -0,0 +1,${hugeLines.length} @@`, ...hugeLines].join("\n") }, pullRequest.files[0]!],
+    };
+    const { app, modelRequests } = setup([withHugeFile], [{ findings: [] }]);
+
+    const review = (await (await startReview(app, withHugeFile)).json()) as Review;
+
+    expect(modelRequests).toHaveLength(1);
+    expect(review.fileOutcomes).toEqual([
+      { file: "src/generated.ts", outcome: "skipped", reason: expect.stringMatching(/too large/i) },
+      { file: "src/users.ts", outcome: "reviewed" },
+    ]);
+  });
+
+  test("a file whose retry is also invalid fails with a reason, and the other files are still reviewed", async () => {
+    const twoFiles: PullRequestSnapshot = {
+      ...pullRequest,
+      files: [{ path: "src/config.ts", patch: "@@ -0,0 +1 @@\n+export const retries = 3;" }, pullRequest.files[0]!],
+    };
+    const { app, modelRequests } = setup(
+      [twoFiles],
+      ['{"findings": [', "I could not find any problems.", { findings: [sqlInjection] }],
+    );
+
+    const started = await startReview(app, twoFiles);
+
+    expect(started.status).toBe(201);
+    const review = (await started.json()) as Review;
+    expect(modelRequests).toHaveLength(3);
+    expect(review.fileOutcomes).toEqual([
+      { file: "src/config.ts", outcome: "failed", reason: expect.stringMatching(/JSON/) },
+      { file: "src/users.ts", outcome: "reviewed" },
+    ]);
+    expect(review.findings).toEqual([{ ...sqlInjection, file: "src/users.ts" }]);
+    expect(await (await app.request(`/api/reviews/${review.id}`)).json()).toEqual(review);
   });
 
   test("the Model sees the Pull Request's title and description", async () => {
@@ -179,23 +260,59 @@ describe("Reviews", () => {
     expect(review.findings[0]).not.toHaveProperty("securityReference");
   });
 
-  test("an unreachable Model Provider fails the Review with a clear error", async () => {
-    const { app } = setup([pullRequest], []);
+  test("a Model call error is retried once, and a valid retry reviews the file", async () => {
+    const { app, modelRequests } = setup([pullRequest], [new Error("socket hang up"), { findings: [sqlInjection] }]);
 
-    const started = await startReview(app, pullRequest);
+    const review = (await (await startReview(app, pullRequest)).json()) as Review;
 
-    expect(started.status).toBe(502);
-    expect(await started.json()).toEqual({
-      error: expect.stringContaining("fake Model Provider ran out of responses"),
-    });
+    expect(modelRequests).toHaveLength(2);
+    expect(review.fileOutcomes).toEqual([{ file: "src/users.ts", outcome: "reviewed" }]);
+    expect(review.findings).toEqual([{ ...sqlInjection, file: "src/users.ts" }]);
   });
 
-  test("a reply that isn't JSON yields no Findings for that file", async () => {
-    const { app } = setup([pullRequest], ["Sure! Here are the problems I found: ..."]);
+  test("a Model call that times out is retried once, then fails the file with a reason", async () => {
+    const { app, modelRequests } = setup([pullRequest], [hang, hang], 20);
+
+    const review = (await (await startReview(app, pullRequest)).json()) as Review;
+
+    expect(modelRequests).toHaveLength(2);
+    expect(review.fileOutcomes).toEqual([
+      { file: "src/users.ts", outcome: "failed", reason: expect.stringMatching(/timed out/i) },
+    ]);
+  });
+
+  test("a Model call that times out is retried once, and a valid retry reviews the file", async () => {
+    const { app } = setup([pullRequest], [hang, { findings: [sqlInjection] }], 20);
+
+    const review = (await (await startReview(app, pullRequest)).json()) as Review;
+
+    expect(review.fileOutcomes).toEqual([{ file: "src/users.ts", outcome: "reviewed" }]);
+    expect(review.findings).toEqual([{ ...sqlInjection, file: "src/users.ts" }]);
+  });
+
+  test("an unreachable Model Provider fails each file with the error, and the Review still completes", async () => {
+    const refused = new Error("connect ECONNREFUSED 127.0.0.1:11434");
+    const { app, modelRequests } = setup([pullRequest], [refused, refused]);
 
     const started = await startReview(app, pullRequest);
 
     expect(started.status).toBe(201);
-    expect(((await started.json()) as Review).findings).toEqual([]);
+    expect(modelRequests).toHaveLength(2);
+    expect(((await started.json()) as Review).fileOutcomes).toEqual([
+      { file: "src/users.ts", outcome: "failed", reason: expect.stringContaining("ECONNREFUSED") },
+    ]);
+  });
+
+  test("a reply that isn't JSON is retried once, and a valid retry reviews the file", async () => {
+    const { app, modelRequests } = setup(
+      [pullRequest],
+      ["Sure! Here are the problems I found: ...", { findings: [sqlInjection] }],
+    );
+
+    const review = (await (await startReview(app, pullRequest)).json()) as Review;
+
+    expect(modelRequests).toHaveLength(2);
+    expect(review.fileOutcomes).toEqual([{ file: "src/users.ts", outcome: "reviewed" }]);
+    expect(review.findings).toEqual([{ ...sqlInjection, file: "src/users.ts" }]);
   });
 });

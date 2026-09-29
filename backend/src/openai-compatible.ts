@@ -12,9 +12,10 @@ export const OLLAMA_BASE_URL = "http://localhost:11434/v1";
 /** Talks to any OpenAI-compatible chat completions API (Ollama, OpenAI, and others). */
 export function openAICompatibleProvider({ baseUrl, apiKey }: OpenAICompatibleConfig): ModelProvider {
   return {
-    async complete({ model, messages, responseSchema }) {
+    async complete({ model, messages, responseSchema, signal }) {
       const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/chat/completions`, {
         method: "POST",
+        signal,
         headers: {
           "content-type": "application/json",
           ...(apiKey && { authorization: `Bearer ${apiKey}` }),
