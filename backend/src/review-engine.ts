@@ -66,6 +66,7 @@ export async function runReview(
     id: randomUUID(),
     pullRequest: { owner, repo, number },
     headCommit,
+    modelProvider: modelProvider.name,
     model,
     createdAt: new Date().toISOString(),
     fileOutcomes,

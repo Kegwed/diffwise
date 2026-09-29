@@ -14,6 +14,10 @@ export interface ChatRequest {
 
 /** A source of language models that can run Reviews. */
 export interface ModelProvider {
+  /** Names the Model Provider in the Model listing and on the Reviews it runs; unique among configured providers. */
+  name: string;
+  /** The Models this provider offers, from its list-models endpoint. */
+  listModels(): Promise<string[]>;
   /** Returns the raw text of the Model's reply. */
   complete(request: ChatRequest): Promise<string>;
 }

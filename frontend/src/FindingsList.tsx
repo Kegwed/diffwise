@@ -24,7 +24,7 @@ export function FindingsList({ review }: { review: Review }) {
         Review of {owner}/{repo}#{number}
       </h2>
       <p className="meta">
-        {review.model} at <code>{review.headCommit.slice(0, 7)}</code>
+        {review.model} via {review.modelProvider} at <code>{review.headCommit.slice(0, 7)}</code>
       </p>
       <CoverageNotice fileOutcomes={review.fileOutcomes} />
       {byFile.size === 0 && <p>No Findings.</p>}

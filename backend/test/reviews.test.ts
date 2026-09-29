@@ -1,9 +1,10 @@
 import { describe, expect, test } from "vitest";
-import type { Review } from "@diffwise/shared";
+import type { ModelProviderListing, PullRequestRef, Review } from "@diffwise/shared";
 import { createApp } from "../src/app.ts";
 import { openDatabase } from "../src/db.ts";
 import type { PullRequestSnapshot } from "../src/forge.ts";
 import { fixtureForge } from "../src/fixture-forge.ts";
+import type { ModelProvider } from "../src/model-provider.ts";
 import { fakeModelProvider, hang } from "./fakes.ts";
 
 const pullRequest: PullRequestSnapshot = {
@@ -43,19 +44,22 @@ function setup(pullRequests: PullRequestSnapshot[], modelResponses: unknown[], m
   const modelProvider = fakeModelProvider(modelResponses);
   const app = createApp({
     forge: fixtureForge(pullRequests),
-    modelProvider: modelProvider.provider,
-    model: "test-model",
+    modelProviders: [modelProvider.provider],
     db: openDatabase(":memory:"),
     modelCallTimeoutMs,
   });
   return { app, modelRequests: modelProvider.requests };
 }
 
-async function startReview(app: ReturnType<typeof createApp>, pr: PullRequestSnapshot) {
+async function startReview(
+  app: ReturnType<typeof createApp>,
+  pr: PullRequestRef,
+  { modelProvider = "Ollama", model = "test-model" }: { modelProvider?: string; model?: string } = {},
+) {
   return app.request("/api/reviews", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ pullRequest: { owner: pr.owner, repo: pr.repo, number: pr.number } }),
+    body: JSON.stringify({ pullRequest: { owner: pr.owner, repo: pr.repo, number: pr.number }, modelProvider, model }),
   });
 }
 
@@ -74,6 +78,7 @@ describe("Reviews", () => {
       id,
       pullRequest: { owner: "acme", repo: "shop", number: 7 },
       headCommit: "abc1234",
+      modelProvider: "Ollama",
       model: "test-model",
       fileOutcomes: [{ file: "src/users.ts", outcome: "reviewed" }],
       findings: [{ ...sqlInjection, file: "src/users.ts" }],
@@ -314,5 +319,74 @@ describe("Reviews", () => {
     expect(modelRequests).toHaveLength(2);
     expect(review.fileOutcomes).toEqual([{ file: "src/users.ts", outcome: "reviewed" }]);
     expect(review.findings).toEqual([{ ...sqlInjection, file: "src/users.ts" }]);
+  });
+});
+
+describe("Models", () => {
+  function setupProviders(...modelProviders: ModelProvider[]) {
+    return createApp({ forge: fixtureForge([pullRequest]), modelProviders, db: openDatabase(":memory:") });
+  }
+
+  test("lists each Model Provider's Models, grouped by provider", async () => {
+    const app = setupProviders(
+      fakeModelProvider([], { name: "Ollama", models: ["llama3.1:8b", "qwen2.5-coder:7b"] }).provider,
+      fakeModelProvider([], { name: "OpenAI-compatible", models: ["gpt-4o"] }).provider,
+    );
+
+    const listed = await (await app.request("/api/models")).json();
+
+    expect(listed).toEqual<ModelProviderListing[]>([
+      { modelProvider: "Ollama", status: "available", models: ["llama3.1:8b", "qwen2.5-coder:7b"] },
+      { modelProvider: "OpenAI-compatible", status: "available", models: ["gpt-4o"] },
+    ]);
+  });
+
+  test("a Model Provider that can't be reached is listed as unavailable, and the others still list their Models", async () => {
+    const app = setupProviders(
+      fakeModelProvider([], { name: "Ollama", models: new Error("connect ECONNREFUSED 127.0.0.1:11434") }).provider,
+      fakeModelProvider([], { name: "OpenAI-compatible", models: ["gpt-4o"] }).provider,
+    );
+
+    const response = await app.request("/api/models");
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual<ModelProviderListing[]>([
+      { modelProvider: "Ollama", status: "unavailable", reason: expect.stringContaining("ECONNREFUSED") },
+      { modelProvider: "OpenAI-compatible", status: "available", models: ["gpt-4o"] },
+    ]);
+  });
+
+  test("with no Model Provider configured, the listing is empty", async () => {
+    const app = setupProviders();
+
+    expect(await (await app.request("/api/models")).json()).toEqual([]);
+  });
+
+  test("a Review runs on the chosen Model Provider and Model, and records both", async () => {
+    const ollama = fakeModelProvider([], { name: "Ollama" });
+    const openAI = fakeModelProvider([{ findings: [sqlInjection] }], { name: "OpenAI-compatible", models: ["gpt-4o"] });
+    const app = setupProviders(ollama.provider, openAI.provider);
+
+    const started = await startReview(app, pullRequest, { modelProvider: "OpenAI-compatible", model: "gpt-4o" });
+
+    expect(started.status).toBe(201);
+    const { id } = (await started.json()) as Review;
+    expect(ollama.requests).toHaveLength(0);
+    expect(openAI.requests.map((r) => r.model)).toEqual(["gpt-4o"]);
+    const review = (await (await app.request(`/api/reviews/${id}`)).json()) as Review;
+    expect(review).toMatchObject({ modelProvider: "OpenAI-compatible", model: "gpt-4o" });
+  });
+
+  test.each([
+    ["an unknown Model Provider", { modelProvider: "Nope", model: "test-model" }],
+    ["no Model", { modelProvider: "Ollama", model: "" }],
+  ])("starting a Review with %s is a 400", async (_, choice) => {
+    const { provider, requests } = fakeModelProvider([]);
+    const app = setupProviders(provider);
+
+    const started = await startReview(app, pullRequest, choice);
+
+    expect(started.status).toBe(400);
+    expect(requests).toHaveLength(0);
   });
 });

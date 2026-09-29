@@ -42,6 +42,8 @@ export interface Review {
   id: string;
   pullRequest: PullRequestRef;
   headCommit: string;
+  /** Name of the Model Provider that ran the Review. */
+  modelProvider: string;
   model: string;
   createdAt: string;
   /** One per changed file, in the Pull Request's file order. */
@@ -51,7 +53,15 @@ export interface Review {
 
 export interface StartReviewRequest {
   pullRequest: PullRequestRef;
+  /** Name of a configured Model Provider, as listed by the Model listing. */
+  modelProvider: string;
+  model: string;
 }
+
+/** One configured Model Provider in the Model listing: the Models it offers, or why it can't be used. */
+export type ModelProviderListing =
+  | { modelProvider: string; status: "available"; models: string[] }
+  | { modelProvider: string; status: "unavailable"; reason: string };
 
 export interface ApiError {
   error: string;

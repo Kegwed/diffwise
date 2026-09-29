@@ -1,4 +1,11 @@
-import type { ApiError, PullRequestRef, PullRequestSummary, Review, StartReviewRequest } from "@diffwise/shared";
+import type {
+  ApiError,
+  ModelProviderListing,
+  PullRequestRef,
+  PullRequestSummary,
+  Review,
+  StartReviewRequest,
+} from "@diffwise/shared";
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
@@ -14,8 +21,12 @@ export function listPullRequests(): Promise<PullRequestSummary[]> {
   return request("/api/pull-requests");
 }
 
-export function startReview(pullRequest: PullRequestRef): Promise<Review> {
-  const body: StartReviewRequest = { pullRequest };
+export function listModels(): Promise<ModelProviderListing[]> {
+  return request("/api/models");
+}
+
+export function startReview(pullRequest: PullRequestRef, modelProvider: string, model: string): Promise<Review> {
+  const body: StartReviewRequest = { pullRequest, modelProvider, model };
   return request("/api/reviews", {
     method: "POST",
     headers: { "content-type": "application/json" },

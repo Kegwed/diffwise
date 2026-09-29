@@ -14,6 +14,7 @@ export function openDatabase(path: string): Database {
       repo TEXT NOT NULL,
       number INTEGER NOT NULL,
       head_commit TEXT NOT NULL,
+      model_provider TEXT NOT NULL,
       model TEXT NOT NULL,
       created_at TEXT NOT NULL
     );
@@ -40,12 +41,17 @@ export function openDatabase(path: string): Database {
       PRIMARY KEY (review_id, position)
     );
   `);
+  const reviewColumns = db.prepare("PRAGMA table_info(reviews)").all() as unknown as { name: string }[];
+  if (!reviewColumns.some((column) => column.name === "model_provider")) {
+    // Reviews saved before Model Providers were configurable all ran on the Ollama preset.
+    db.exec("ALTER TABLE reviews ADD COLUMN model_provider TEXT NOT NULL DEFAULT 'Ollama'");
+  }
   return db;
 }
 
 export function saveReview(db: Database, review: Review): void {
   const insertReview = db.prepare(
-    "INSERT INTO reviews (id, owner, repo, number, head_commit, model, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO reviews (id, owner, repo, number, head_commit, model_provider, model, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
   );
   const insertFinding = db.prepare(
     `INSERT INTO findings (review_id, position, kind, severity, file, start_line, end_line, title, explanation, suggested_fix, security_reference)
@@ -57,7 +63,7 @@ export function saveReview(db: Database, review: Review): void {
   const { owner, repo, number } = review.pullRequest;
   db.exec("BEGIN");
   try {
-    insertReview.run(review.id, owner, repo, number, review.headCommit, review.model, review.createdAt);
+    insertReview.run(review.id, owner, repo, number, review.headCommit, review.modelProvider, review.model, review.createdAt);
     review.fileOutcomes.forEach((o, position) => {
       insertFileOutcome.run(review.id, position, o.file, o.outcome, o.outcome === "reviewed" ? null : o.reason);
     });
@@ -89,6 +95,7 @@ interface ReviewRow {
   repo: string;
   number: number;
   head_commit: string;
+  model_provider: string;
   model: string;
   created_at: string;
 }
@@ -124,6 +131,7 @@ export function getReview(db: Database, id: string): Review | undefined {
     id: row.id,
     pullRequest: { owner: row.owner, repo: row.repo, number: row.number },
     headCommit: row.head_commit,
+    modelProvider: row.model_provider,
     model: row.model,
     createdAt: row.created_at,
     fileOutcomes: fileOutcomeRows.map(toFileOutcome),

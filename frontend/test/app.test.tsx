@@ -1,7 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, test, vi } from "vitest";
-import type { PullRequestSummary, Review } from "@diffwise/shared";
+import type { ModelProviderListing, PullRequestSummary, Review } from "@diffwise/shared";
 import { App } from "../src/App.tsx";
 
 const pullRequest: PullRequestSummary = {
@@ -17,6 +17,7 @@ const review: Review = {
   id: "review-1",
   pullRequest: { owner: "acme", repo: "shop", number: 7 },
   headCommit: "abc1234def",
+  modelProvider: "Ollama",
   model: "llama3.1:8b",
   createdAt: "2026-09-27T10:00:00.000Z",
   fileOutcomes: [
@@ -56,10 +57,16 @@ const review: Review = {
   ],
 };
 
+const modelListing: ModelProviderListing[] = [
+  { modelProvider: "Ollama", status: "available", models: ["llama3.1:8b", "qwen2.5-coder:7b"] },
+  { modelProvider: "OpenAI-compatible", status: "available", models: ["gpt-4o"] },
+];
+
 /** Stubs fetch with the backend's API responses. */
-function stubApi(startedReview: Review = review) {
+function stubApi(startedReview: Review = review, models: ModelProviderListing[] = modelListing) {
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
     if (url === "/api/pull-requests") return Response.json([pullRequest]);
+    if (url === "/api/models") return Response.json(models);
     if (url === "/api/reviews" && init?.method === "POST") return Response.json(startedReview, { status: 201 });
     return Response.json({ error: "not found" }, { status: 404 });
   });
@@ -77,7 +84,7 @@ test("reviewing a fixture Pull Request shows its Findings grouped by file", asyn
     "/api/reviews",
     expect.objectContaining({
       method: "POST",
-      body: JSON.stringify({ pullRequest: { owner: "acme", repo: "shop", number: 7 } }),
+      body: JSON.stringify({ pullRequest: { owner: "acme", repo: "shop", number: 7 }, modelProvider: "Ollama", model: "llama3.1:8b" }),
     }),
   );
 
@@ -92,16 +99,11 @@ test("reviewing a fixture Pull Request shows its Findings grouped by file", asyn
   const config = screen.getByRole("region", { name: "src/config.ts" });
   expect(within(config).getByRole("heading", { level: 4 })).toHaveTextContent("Magic number");
 
-  expect(screen.getByText(/llama3\.1:8b/)).toBeInTheDocument();
+  expect(screen.getByRole("region", { name: /review of/i })).toHaveTextContent(/llama3\.1:8b via Ollama/);
 });
 
 test("a Review with no Findings says so", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (url: string) =>
-      url === "/api/pull-requests" ? Response.json([pullRequest]) : Response.json({ ...review, findings: [] }, { status: 201 }),
-    ),
-  );
+  stubApi({ ...review, findings: [] });
   render(<App />);
 
   await userEvent.click(await screen.findByRole("button", { name: /review/i }));
@@ -148,4 +150,57 @@ test("a Review whose every file was reviewed has no incomplete-coverage notice",
 
   await screen.findByRole("region", { name: "src/users.ts" });
   expect(screen.queryByRole("note")).not.toBeInTheDocument();
+});
+
+test("the Model dropdown groups Models by Model Provider, and the Review runs on the chosen one", async () => {
+  const fetch = stubApi({ ...review, modelProvider: "OpenAI-compatible", model: "gpt-4o" });
+  render(<App />);
+
+  const select = await screen.findByRole("combobox", { name: /model/i });
+  const groups = within(select).getAllByRole("group");
+  expect(groups.map((g) => [g.getAttribute("label"), within(g).getAllByRole("option").map((o) => o.textContent)])).toEqual([
+    ["Ollama", ["llama3.1:8b", "qwen2.5-coder:7b"]],
+    ["OpenAI-compatible", ["gpt-4o"]],
+  ]);
+
+  await userEvent.selectOptions(select, "gpt-4o");
+  await userEvent.click(screen.getByRole("button", { name: /review/i }));
+
+  expect(fetch).toHaveBeenCalledWith(
+    "/api/reviews",
+    expect.objectContaining({
+      body: JSON.stringify({ pullRequest: { owner: "acme", repo: "shop", number: 7 }, modelProvider: "OpenAI-compatible", model: "gpt-4o" }),
+    }),
+  );
+  expect(await screen.findByRole("region", { name: /review of/i })).toHaveTextContent(/gpt-4o via OpenAI-compatible/);
+});
+
+test("an unavailable Model Provider is shown with its reason, and the others' Models can still be chosen", async () => {
+  stubApi(review, [
+    { modelProvider: "Ollama", status: "unavailable", reason: "Could not reach http://localhost:11434/v1: ECONNREFUSED" },
+    { modelProvider: "OpenAI-compatible", status: "available", models: ["gpt-4o"] },
+  ]);
+  render(<App />);
+
+  const select = await screen.findByRole("combobox", { name: /model/i });
+  expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["gpt-4o"]);
+  expect(screen.getByText(/ollama is unavailable/i)).toHaveTextContent(/ECONNREFUSED/);
+  expect(await screen.findByRole("button", { name: /review/i })).toBeEnabled();
+});
+
+test.each<[string, ModelProviderListing[], RegExp]>([
+  ["none is configured", [], /no model provider is configured/i],
+  [
+    "none can be reached",
+    [{ modelProvider: "Ollama", status: "unavailable", reason: "Could not reach http://localhost:11434/v1: ECONNREFUSED" }],
+    /no model provider is available/i,
+  ],
+  ["none offers a Model", [{ modelProvider: "Ollama", status: "available", models: [] }], /no model provider is available/i],
+])("when %s, the page explains why a Review can't be started", async (_, models, explanation) => {
+  stubApi(review, models);
+  render(<App />);
+
+  expect(await screen.findByText(explanation)).toBeInTheDocument();
+  expect(screen.queryByRole("combobox", { name: /model/i })).not.toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: /review/i })).toBeDisabled();
 });
