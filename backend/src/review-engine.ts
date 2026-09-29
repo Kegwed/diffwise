@@ -11,8 +11,8 @@ const modelFinding = z.object({
   endLine: z.number().int().positive(),
   title: z.string().min(1),
   explanation: z.string().min(1),
-  suggestedFix: z.string().optional(),
-  securityReference: z.string().optional(),
+  suggestedFix: z.string().nullish(),
+  securityReference: z.string().nullish(),
 }).refine((finding) => finding.endLine >= finding.startLine, "endLine is before startLine");
 
 const modelResponse = z.object({ findings: z.array(modelFinding) });
@@ -68,9 +68,14 @@ async function reviewFile(
   return parsed.data.findings.flatMap((candidate) => {
     const finding = modelFinding.safeParse(candidate);
     if (!finding.success) return [];
-    const { securityReference, ...rest } = finding.data;
-    // A Security Reference only belongs on a Security Issue.
-    return [{ ...rest, ...(rest.kind === "security-issue" && securityReference && { securityReference }), file: file.path }];
+    const { suggestedFix, securityReference, ...rest } = finding.data;
+    // Models often send null for an optional field they leave out. A Security Reference only belongs on a Security Issue.
+    return [{
+      ...rest,
+      ...(suggestedFix && { suggestedFix }),
+      ...(rest.kind === "security-issue" && securityReference && { securityReference }),
+      file: file.path,
+    }];
   });
 }
 

@@ -169,6 +169,16 @@ describe("Reviews", () => {
     expect(review.findings[0]).not.toHaveProperty("securityReference");
   });
 
+  test("a Finding whose optional fields are null is kept without them", async () => {
+    const { app } = setup([pullRequest], [{ findings: [{ ...sqlInjection, suggestedFix: null, securityReference: null }] }]);
+
+    const review = (await (await startReview(app, pullRequest)).json()) as Review;
+
+    expect(review.findings).toHaveLength(1);
+    expect(review.findings[0]).not.toHaveProperty("suggestedFix");
+    expect(review.findings[0]).not.toHaveProperty("securityReference");
+  });
+
   test("an unreachable Model Provider fails the Review with a clear error", async () => {
     const { app } = setup([pullRequest], []);
 

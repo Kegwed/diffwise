@@ -11,7 +11,7 @@ if (existsSync(envFile)) process.loadEnvFile(envFile);
 
 const model = process.env.DIFFWISE_MODEL;
 if (!model) {
-  console.error("Set DIFFWISE_MODEL to the Model that should run Reviews (e.g. DIFFWISE_MODEL=llama3.1:8b). See README.md.");
+  console.error("Set DIFFWISE_MODEL to the Model that should run Reviews (e.g. DIFFWISE_MODEL=qwen2.5-coder:7b). See README.md.");
   process.exit(1);
 }
 const baseUrl = process.env.DIFFWISE_OLLAMA_URL ?? OLLAMA_BASE_URL;
