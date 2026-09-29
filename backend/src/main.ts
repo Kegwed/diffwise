@@ -4,7 +4,7 @@ import { serve } from "@hono/node-server";
 import { createApp } from "./app.ts";
 import { openDatabase } from "./db.ts";
 import { fixtureForge } from "./fixture-forge.ts";
-import { modelProvidersFromEnv } from "./openai-compatible.ts";
+import { modelProvidersFromEnv } from "./model-provider-config.ts";
 
 const envFile = fileURLToPath(new URL("../../.env", import.meta.url));
 if (existsSync(envFile)) process.loadEnvFile(envFile);

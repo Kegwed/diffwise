@@ -27,7 +27,7 @@ You need Node.js 24+ and [Ollama](https://ollama.com).
    npm run dev
    ```
 
-4. Open http://localhost:5173, pick a Model from the dropdown (it lists the Models each Model Provider offers, grouped by provider), then click **Review** on the fixture Pull Request. A Model Provider that can't be reached is shown as unavailable, with the reason. Each changed file is sent to the Model separately, so a Review takes a little while on a local Model. The Findings appear grouped by file when it's finished, along with each file's File Outcome: reviewed, skipped (lockfiles, minified assets, build output, binaries and very large diffs are never sent to the Model) or failed (the Model's reply was invalid or the call errored or timed out, twice). A Review with any skipped or failed file is flagged as having incomplete coverage.
+4. Open http://localhost:5173, pick a Model from the dropdown (it lists the Models each Model Provider offers, grouped by Model Provider), then click **Review** on the fixture Pull Request. A Model Provider that can't be reached is shown as unavailable, with the reason. Each changed file is sent to the Model separately, so a Review takes a little while on a local Model. The Findings appear grouped by file when it's finished, along with each file's File Outcome: reviewed, skipped (lockfiles, minified assets, build output, binaries and very large diffs are never sent to the Model) or failed (the Model's reply was invalid or the call errored or timed out, twice). A Review with any skipped or failed file is flagged as having incomplete coverage.
 
 ### Configuration
 
@@ -37,7 +37,7 @@ Set these in `.env` at the repo root, or in the environment:
 | -------------------------- | --------------------------- | ------------------------------------------------------------------------ |
 | `DIFFWISE_OLLAMA_URL`      | `http://localhost:11434/v1` | Ollama's OpenAI-compatible endpoint; set it empty to turn Ollama off     |
 | `DIFFWISE_OPENAI_BASE_URL` | `https://api.openai.com/v1` | Base URL of any OpenAI-compatible API                                    |
-| `DIFFWISE_OPENAI_API_KEY`  | (none)                      | Its API key; setting this or the base URL turns the provider on          |
+| `DIFFWISE_OPENAI_API_KEY`  | (none)                      | Its API key; setting this or the base URL turns this Model Provider on |
 | `DIFFWISE_PORT`            | `3001`                      | Backend port (the frontend proxies `/api` to it)                         |
 | `DIFFWISE_DB`              | `diffwise.db` at repo root  | SQLite file where Reviews are saved                                      |
 

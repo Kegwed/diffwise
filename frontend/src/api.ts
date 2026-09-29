@@ -1,5 +1,6 @@
 import type {
   ApiError,
+  ModelChoice,
   ModelProviderListing,
   PullRequestRef,
   PullRequestSummary,
@@ -25,7 +26,7 @@ export function listModels(): Promise<ModelProviderListing[]> {
   return request("/api/models");
 }
 
-export function startReview(pullRequest: PullRequestRef, modelProvider: string, model: string): Promise<Review> {
+export function startReview(pullRequest: PullRequestRef, { modelProvider, model }: ModelChoice): Promise<Review> {
   const body: StartReviewRequest = { pullRequest, modelProvider, model };
   return request("/api/reviews", {
     method: "POST",

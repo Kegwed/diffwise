@@ -1,4 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
+import { OLLAMA } from "./model-provider-config.ts";
 import type { FileOutcome, Finding, FindingKind, Review, Severity } from "@diffwise/shared";
 
 export type Database = DatabaseSync;
@@ -44,7 +45,7 @@ export function openDatabase(path: string): Database {
   const reviewColumns = db.prepare("PRAGMA table_info(reviews)").all() as unknown as { name: string }[];
   if (!reviewColumns.some((column) => column.name === "model_provider")) {
     // Reviews saved before Model Providers were configurable all ran on the Ollama preset.
-    db.exec("ALTER TABLE reviews ADD COLUMN model_provider TEXT NOT NULL DEFAULT 'Ollama'");
+    db.exec(`ALTER TABLE reviews ADD COLUMN model_provider TEXT NOT NULL DEFAULT '${OLLAMA}'`);
   }
   return db;
 }

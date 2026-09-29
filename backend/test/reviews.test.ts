@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import type { ModelProviderListing, PullRequestRef, Review } from "@diffwise/shared";
+import type { ModelChoice, ModelProviderListing, PullRequestRef, Review } from "@diffwise/shared";
 import { createApp } from "../src/app.ts";
 import { openDatabase } from "../src/db.ts";
 import type { PullRequestSnapshot } from "../src/forge.ts";
@@ -54,7 +54,7 @@ function setup(pullRequests: PullRequestSnapshot[], modelResponses: unknown[], m
 async function startReview(
   app: ReturnType<typeof createApp>,
   pr: PullRequestRef,
-  { modelProvider = "Ollama", model = "test-model" }: { modelProvider?: string; model?: string } = {},
+  { modelProvider = "Ollama", model = "test-model" }: Partial<ModelChoice> = {},
 ) {
   return app.request("/api/reviews", {
     method: "POST",

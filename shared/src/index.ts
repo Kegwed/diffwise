@@ -38,24 +38,26 @@ export type FileOutcome =
   | { file: string; outcome: "reviewed" }
   | { file: string; outcome: "skipped" | "failed"; reason: string };
 
-export interface Review {
+/** A Model, on the Model Provider that offers it. */
+export interface ModelChoice {
+  /** Name of a configured Model Provider, as the Model listing shows it. */
+  modelProvider: string;
+  model: string;
+}
+
+/** Records the Model Provider and Model that ran it. */
+export interface Review extends ModelChoice {
   id: string;
   pullRequest: PullRequestRef;
   headCommit: string;
-  /** Name of the Model Provider that ran the Review. */
-  modelProvider: string;
-  model: string;
   createdAt: string;
   /** One per changed file, in the Pull Request's file order. */
   fileOutcomes: FileOutcome[];
   findings: Finding[];
 }
 
-export interface StartReviewRequest {
+export interface StartReviewRequest extends ModelChoice {
   pullRequest: PullRequestRef;
-  /** Name of a configured Model Provider, as listed by the Model listing. */
-  modelProvider: string;
-  model: string;
 }
 
 /** One configured Model Provider in the Model listing: the Models it offers, or why it can't be used. */

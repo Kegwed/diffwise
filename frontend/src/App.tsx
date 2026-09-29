@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import type { ModelProviderListing, PullRequestSummary, Review } from "@diffwise/shared";
+import type { ModelChoice, ModelProviderListing, PullRequestSummary, Review } from "@diffwise/shared";
 import { listModels, listPullRequests, startReview } from "./api.ts";
 import { FindingsList } from "./FindingsList.tsx";
-import { firstModel, ModelPicker, type ModelChoice } from "./ModelPicker.tsx";
+import { firstModel, ModelPicker } from "./ModelPicker.tsx";
 
 export function App() {
   const [pullRequests, setPullRequests] = useState<PullRequestSummary[]>();
@@ -24,12 +24,12 @@ export function App() {
       .catch((e: Error) => setError(e.message));
   }, []);
 
-  async function reviewPullRequest(pr: PullRequestSummary, { modelProvider, model }: ModelChoice) {
+  async function reviewPullRequest(pr: PullRequestSummary, modelChoice: ModelChoice) {
     setReviewing(pr);
     setReview(undefined);
     setError(undefined);
     try {
-      setReview(await startReview({ owner: pr.owner, repo: pr.repo, number: pr.number }, modelProvider, model));
+      setReview(await startReview({ owner: pr.owner, repo: pr.repo, number: pr.number }, modelChoice));
     } catch (e) {
       setError((e as Error).message);
     } finally {

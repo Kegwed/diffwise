@@ -16,7 +16,7 @@ export interface ChatRequest {
 export interface ModelProvider {
   /** Names the Model Provider in the Model listing and on the Reviews it runs; unique among configured providers. */
   name: string;
-  /** The Models this provider offers, from its list-models endpoint. */
+  /** The Models this Model Provider offers, from its list-models endpoint. */
   listModels(): Promise<string[]>;
   /** Returns the raw text of the Model's reply. */
   complete(request: ChatRequest): Promise<string>;
