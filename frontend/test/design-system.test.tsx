@@ -22,6 +22,12 @@ test("a Severity label can be overridden, but never left out", () => {
   expect(screen.queryByText("High")).not.toBeInTheDocument();
 });
 
+test("an empty Severity label falls back to the level name", () => {
+  render(<Severity level="high">{""}</Severity>);
+
+  expect(screen.getByText("High")).toBeInTheDocument();
+});
+
 test("a Security Issue shows its Security Reference as an outline Badge after its kind", () => {
   render(
     <Finding kind="security-issue" severity="critical" securityReference="CWE-89" title="SQL injection" file="a.ts" lines={3} />,

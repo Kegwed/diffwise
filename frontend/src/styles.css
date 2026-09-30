@@ -20,6 +20,7 @@ main {
   }
 }
 
+/* The name set as the logo: title type with the logo's -0.02em tracking. */
 h1 {
   margin: 0 0 var(--space-8);
   font: var(--type-title);

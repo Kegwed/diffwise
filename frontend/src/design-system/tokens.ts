@@ -49,6 +49,10 @@ const FONT_FORMATS: Record<string, string> = { woff2: "woff2", woff: "woff", ttf
 
 /** CSS for tokens.json: @font-face rules, the light theme on :root and the dark theme under prefers-color-scheme. */
 export function tokensToCss(tokens: DesignTokens): string {
+  const unknown = tokens.color.themes.filter(({ id }) => !(THEMES as readonly string[]).includes(id));
+  if (unknown.length > 0) {
+    throw new Error(`Unsupported theme ${unknown.map(({ id }) => `"${id}"`).join(", ")}: only light and dark follow the OS setting`);
+  }
   const shared: [string, string][] = [];
   const themed: Record<Theme, [string, string][]> = { light: [], dark: [] };
 

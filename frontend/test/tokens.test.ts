@@ -102,6 +102,15 @@ test("the design system's own tokens.json generates both themes", () => {
   expect(css.match(/@font-face/g)).toHaveLength(5);
 });
 
+test("a theme other than light and dark is an error, not silently dropped", () => {
+  const extra: DesignTokens = {
+    ...sample,
+    color: { ...sample.color, themes: [...sample.color.themes, { id: "high-contrast", name: "High contrast" }] },
+  };
+
+  expect(() => tokensToCss(extra)).toThrow(/high-contrast/);
+});
+
 test("a themed value missing a theme is an error, not a silently missing variable", () => {
   const broken: DesignTokens = {
     ...sample,
