@@ -87,6 +87,24 @@ describe("Resolving a Pull Request URL", () => {
     expect(((await response.json()) as ApiError).error).toMatch(/acme\/shop#8 not found/);
   });
 
+  test("any other error reaching the Forge is reported with its message", async () => {
+    const app = createApp({
+      forge: {
+        listPullRequests: async () => [],
+        getPullRequest: async () => {
+          throw new Error("GitHub replied 503 when fetching acme/shop#7: unavailable");
+        },
+      },
+      modelProviders: [],
+      db: openDatabase(":memory:"),
+    });
+
+    const response = await resolve(app, "https://github.com/acme/shop/pull/7");
+
+    expect(response.status).toBe(500);
+    expect(((await response.json()) as ApiError).error).toBe("GitHub replied 503 when fetching acme/shop#7: unavailable");
+  });
+
   test("starting a Review of a Pull Request in a repo the GitHub App isn't installed on is the same error", async () => {
     const app = setup({ notInstalledOn: ["acme/shop"] });
 

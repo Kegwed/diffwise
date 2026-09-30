@@ -88,14 +88,28 @@ export function manifestPage(manifest: object, state: string): string {
 </html>`;
 }
 
+/** Calls GitHub's REST API, authenticated as `auth` (an App JWT or installation token) when given. */
+export function githubApi(path: string, { auth, ...init }: RequestInit & { auth?: string } = {}): Promise<Response> {
+  return fetch(`https://api.github.com${path}`, {
+    ...init,
+    headers: {
+      accept: "application/vnd.github+json",
+      "x-github-api-version": "2022-11-28",
+      ...(auth && { authorization: `Bearer ${auth}` }),
+    },
+  });
+}
+
+/** The body of GitHub's reply, or an error saying what GitHub replied while `doing` it. */
+export async function githubJson<T>(response: Response, doing: string): Promise<T> {
+  if (!response.ok) throw new Error(`GitHub replied ${response.status} when ${doing}: ${await response.text()}`);
+  return (await response.json()) as T;
+}
+
 /** Trades the one-time code from GitHub's redirect for the created App's credentials. */
 export async function convertManifestCode(code: string): Promise<GitHubAppCredentials> {
-  const response = await fetch(`https://api.github.com/app-manifests/${encodeURIComponent(code)}/conversions`, {
-    method: "POST",
-    headers: { accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28" },
-  });
-  if (!response.ok) throw new Error(`GitHub replied ${response.status} when creating the GitHub App: ${await response.text()}`);
-  const body = (await response.json()) as {
+  const response = await githubApi(`/app-manifests/${encodeURIComponent(code)}/conversions`, { method: "POST" });
+  const body = await githubJson<{
     id: number;
     slug: string;
     name: string;
@@ -103,7 +117,7 @@ export async function convertManifestCode(code: string): Promise<GitHubAppCreden
     pem: string;
     client_id: string;
     client_secret: string;
-  };
+  }>(response, "creating the GitHub App");
   return {
     id: body.id,
     slug: body.slug,

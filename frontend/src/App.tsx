@@ -6,14 +6,16 @@ import { GitHubConnection } from "./GitHubConnection.tsx";
 import { ReviewView } from "./ReviewView.tsx";
 import { firstModel, ModelPicker } from "./ModelPicker.tsx";
 
+const PASTED_URL = Symbol("pasted URL");
+
 export function App() {
   const [githubApp, setGitHubApp] = useState<GitHubAppStatus>();
   const [pullRequests, setPullRequests] = useState<PullRequestSummary[]>();
   const [pullRequestUrl, setPullRequestUrl] = useState("");
   const [modelListings, setModelListings] = useState<ModelProviderListing[]>();
   const [modelChoice, setModelChoice] = useState<ModelChoice>();
-  /** The Pull Request being reviewed, or "url" while a pasted URL is being looked up and reviewed. */
-  const [reviewing, setReviewing] = useState<PullRequestSummary | "url">();
+  /** Where the Review under way was started from: a listed Pull Request's button, or the pasted URL. */
+  const [reviewing, setReviewing] = useState<PullRequestSummary | typeof PASTED_URL>();
   const [review, setReview] = useState<Review>();
   const [error, setError] = useState<string>();
 
@@ -32,13 +34,13 @@ export function App() {
       .catch((e: Error) => setError(e.message));
   }, []);
 
-  /** Reviews the Pull Request `find` settles on, showing `reviewing` as under review meanwhile. */
+  /** Reviews the Pull Request `find` settles on, showing `startedFrom` as under review meanwhile. */
   async function reviewPullRequest(
-    reviewing: PullRequestSummary | "url",
+    startedFrom: PullRequestSummary | typeof PASTED_URL,
     find: () => Promise<PullRequestSummary>,
     modelChoice: ModelChoice,
   ) {
-    setReviewing(reviewing);
+    setReviewing(startedFrom);
     setReview(undefined);
     setError(undefined);
     try {
@@ -53,7 +55,7 @@ export function App() {
 
   function reviewPullRequestUrl(event: FormEvent) {
     event.preventDefault();
-    if (modelChoice) reviewPullRequest("url", () => findPullRequestByUrl(pullRequestUrl), modelChoice);
+    if (modelChoice) reviewPullRequest(PASTED_URL, () => findPullRequestByUrl(pullRequestUrl), modelChoice);
   }
 
   const cannotReview = reviewing !== undefined || modelChoice === undefined;
@@ -77,7 +79,7 @@ export function App() {
             />
           </label>
           <Button type="submit" size="sm" disabled={cannotReview || pullRequestUrl.trim() === ""}>
-            {reviewing === "url" ? "Reviewing…" : "Review"}
+            {reviewing === PASTED_URL ? "Reviewing…" : "Review"}
           </Button>
         </form>
         {!pullRequests && !error && <p>Loading…</p>}

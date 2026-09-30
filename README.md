@@ -80,5 +80,6 @@ The real GitHub adapter (`backend/src/github-forge.ts`) and the Manifest flow ta
 3. You land back on Diffwise, which now says it's connected and links to installing the App. `github-app.json` exists, and `git status` doesn't list it.
 4. Paste a Pull Request URL from a repo the App **isn't** installed on and click **Review**: the error says to install the App there, with the link.
 5. Install the App on one repo (choose "Only select repositories"). Paste one of its Pull Request URLs: a Review runs on its real changed files, and the header shows its real head commit.
-6. Paste `https://github.com/owner/repo/issues/1`: the error says it isn't a GitHub Pull Request URL.
-7. Delete the test App on GitHub and `github-app.json` when done.
+6. Paste a Pull Request URL from another repo on the same account, one not selected in that installation: the error again says to install the App there.
+7. Paste `https://github.com/owner/repo/issues/1`: the error says it isn't a GitHub Pull Request URL.
+8. Delete the test App on GitHub and `github-app.json` when done.

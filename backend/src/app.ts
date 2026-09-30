@@ -145,7 +145,9 @@ export function createApp({
 
   app.onError((error, c) => {
     if (error instanceof ForgeAccessError) return c.json<ApiError>({ error: error.message }, 403);
-    throw error;
+    // Self-hosted and single-user, so the message (e.g. GitHub's reply) is more use to the user than a bare 500.
+    console.error(error);
+    return c.json<ApiError>({ error: error.message }, 500);
   });
 
   return app;
