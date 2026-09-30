@@ -80,3 +80,16 @@ export function fixtureForge(pullRequests: PullRequestSnapshot[] = FIXTURE_PULL_
     },
   };
 }
+
+/** Serves the fixture Pull Requests alongside `forge`'s, so they can still be tried once GitHub is connected. */
+export function withFixtures(forge: Forge, pullRequests: PullRequestSnapshot[] = FIXTURE_PULL_REQUESTS): Forge {
+  const fixtures = fixtureForge(pullRequests);
+  return {
+    async listPullRequests() {
+      return [...(await fixtures.listPullRequests()), ...(await forge.listPullRequests())];
+    },
+    async getPullRequest(ref) {
+      return (await fixtures.getPullRequest(ref)) ?? forge.getPullRequest(ref);
+    },
+  };
+}

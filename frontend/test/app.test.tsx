@@ -1,7 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { expect, test, vi } from "vitest";
-import type { ModelProviderListing, PullRequestSummary, Review } from "@diffwise/shared";
+import { describe, expect, test, vi } from "vitest";
+import type { GitHubAppStatus, ModelProviderListing, PullRequestSummary, Review } from "@diffwise/shared";
 import { App } from "../src/App.tsx";
 
 const pullRequest: PullRequestSummary = {
@@ -109,9 +109,22 @@ function findingsBeneath(file: HTMLElement, newLine: number) {
   return titles;
 }
 
-/** Stubs fetch with the backend's API responses. */
-function stubApi(startedReview: Review = review, models: ModelProviderListing[] = modelListing) {
+const createdGitHubApp: GitHubAppStatus = {
+  status: "created",
+  name: "diffwise-a1b2c3",
+  htmlUrl: "https://github.com/apps/diffwise-a1b2c3",
+  installUrl: "https://github.com/apps/diffwise-a1b2c3/installations/new",
+};
+
+/** Stubs fetch with the backend's API responses; `routes` answers any other URL. */
+function stubApi(
+  startedReview: Review = review,
+  models: ModelProviderListing[] = modelListing,
+  routes: Record<string, () => Response> = {},
+) {
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
+    if (routes[url]) return routes[url]();
+    if (url === "/api/github-app") return Response.json(createdGitHubApp);
     if (url === "/api/pull-requests") return Response.json([pullRequest]);
     if (url === "/api/models") return Response.json(models);
     if (url === "/api/reviews" && init?.method === "POST") return Response.json(startedReview, { status: 201 });
@@ -125,7 +138,7 @@ test("reviewing a fixture Pull Request shows each file's diff with every Finding
   const fetch = stubApi();
   render(<App />);
 
-  await userEvent.click(await screen.findByRole("button", { name: /review/i }));
+  await userEvent.click(await screen.findByRole("button", { name: "Run review" }));
 
   expect(fetch).toHaveBeenCalledWith(
     "/api/reviews",
@@ -154,7 +167,7 @@ test("the diff is GitHub-style: hunk headers, then each line with its old and ne
   stubApi();
   render(<App />);
 
-  await userEvent.click(await screen.findByRole("button", { name: /review/i }));
+  await userEvent.click(await screen.findByRole("button", { name: "Run review" }));
 
   const users = await screen.findByRole("region", { name: "src/users.ts" });
   expect(within(users).getByText("@@ -1,3 +1,8 @@")).toBeInTheDocument();
@@ -176,7 +189,7 @@ test("the header shows the Model and the head commit the Review covered", async 
   stubApi();
   render(<App />);
 
-  await userEvent.click(await screen.findByRole("button", { name: /review/i }));
+  await userEvent.click(await screen.findByRole("button", { name: "Run review" }));
 
   const header = await screen.findByRole("region", { name: /review of acme\/shop#7/i });
   expect(header).toHaveTextContent(/llama3\.1:8b via Ollama at abc1234/);
@@ -204,7 +217,7 @@ test("Findings beneath the same line are stacked by Severity, highest first, the
   });
   render(<App />);
 
-  await userEvent.click(await screen.findByRole("button", { name: /review/i }));
+  await userEvent.click(await screen.findByRole("button", { name: "Run review" }));
 
   const config = await screen.findByRole("region", { name: "src/config.ts" });
   expect(findingsBeneath(config, 2)).toEqual(["Critical at 2", "Medium at 1–2", "Medium at 2", "Low at 2"]);
@@ -224,7 +237,7 @@ test("Findings on lines the diff doesn't show are listed after it, by Severity, 
   });
   render(<App />);
 
-  await userEvent.click(await screen.findByRole("button", { name: /review/i }));
+  await userEvent.click(await screen.findByRole("button", { name: "Run review" }));
 
   const config = await screen.findByRole("region", { name: "src/config.ts" });
   expect(findingsBeneath(config, 1)).toEqual(["Low at 1"]);
@@ -244,7 +257,7 @@ test.each([
   });
   render(<App />);
 
-  await userEvent.click(await screen.findByRole("button", { name: /review/i }));
+  await userEvent.click(await screen.findByRole("button", { name: "Run review" }));
 
   const config = await screen.findByRole("region", { name: "src/config.ts" });
   expect(codeRows(config).map((row) => row.textContent)).toEqual([
@@ -265,7 +278,7 @@ test("a Review saved before diffs were kept lists each file's Findings without a
   });
   render(<App />);
 
-  await userEvent.click(await screen.findByRole("button", { name: /review/i }));
+  await userEvent.click(await screen.findByRole("button", { name: "Run review" }));
 
   const users = await screen.findByRole("region", { name: "src/users.ts" });
   expect(within(users).queryByRole("table")).not.toBeInTheDocument();
@@ -277,7 +290,7 @@ test("a Review with no Findings says so", async () => {
   stubApi({ ...review, findings: [] });
   render(<App />);
 
-  await userEvent.click(await screen.findByRole("button", { name: /review/i }));
+  await userEvent.click(await screen.findByRole("button", { name: "Run review" }));
 
   expect(await screen.findByText(/no findings/i)).toBeInTheDocument();
 });
@@ -294,7 +307,7 @@ test("skipped and failed files show their outcome and reason instead of a diff, 
   });
   render(<App />);
 
-  await userEvent.click(await screen.findByRole("button", { name: /review/i }));
+  await userEvent.click(await screen.findByRole("button", { name: "Run review" }));
 
   const users = await screen.findByRole("region", { name: "src/users.ts" });
   expect(within(users).getByText("Reviewed")).toHaveClass("dw-badge-outline");
@@ -320,7 +333,7 @@ test("a Review whose every file was reviewed has no incomplete-coverage notice",
   stubApi();
   render(<App />);
 
-  await userEvent.click(await screen.findByRole("button", { name: /review/i }));
+  await userEvent.click(await screen.findByRole("button", { name: "Run review" }));
 
   await screen.findByRole("region", { name: "src/users.ts" });
   expect(screen.queryByRole("note")).not.toBeInTheDocument();
@@ -338,7 +351,7 @@ test("the Model dropdown groups Models by Model Provider, and the Review runs on
   ]);
 
   await userEvent.selectOptions(select, "gpt-4o");
-  await userEvent.click(screen.getByRole("button", { name: /review/i }));
+  await userEvent.click(screen.getByRole("button", { name: "Run review" }));
 
   expect(fetch).toHaveBeenCalledWith(
     "/api/reviews",
@@ -359,7 +372,7 @@ test("an unavailable Model Provider is shown with its reason, and the others' Mo
   const select = await screen.findByRole("combobox", { name: /model/i });
   expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["gpt-4o"]);
   expect(screen.getByText(/ollama is unavailable/i)).toHaveTextContent(/ECONNREFUSED/);
-  expect(await screen.findByRole("button", { name: /review/i })).toBeEnabled();
+  expect(await screen.findByRole("button", { name: "Run review" })).toBeEnabled();
 });
 
 test.each<[string, ModelProviderListing[], RegExp]>([
@@ -376,5 +389,64 @@ test.each<[string, ModelProviderListing[], RegExp]>([
 
   expect(await screen.findByText(explanation)).toBeInTheDocument();
   expect(screen.queryByRole("combobox", { name: /model/i })).not.toBeInTheDocument();
-  expect(await screen.findByRole("button", { name: /review/i })).toBeDisabled();
+  expect(await screen.findByRole("button", { name: "Run review" })).toBeDisabled();
+});
+
+describe("connecting to GitHub", () => {
+  test("with no GitHub App created, the page offers to create one", async () => {
+    stubApi(review, modelListing, { "/api/github-app": () => Response.json({ status: "not-created" }) });
+    render(<App />);
+
+    const button = await screen.findByRole("button", { name: "Create GitHub App" });
+    expect(button.closest("form")).toHaveAttribute("action", "/api/github-app/new");
+    expect(screen.queryByRole("link", { name: /install/i })).not.toBeInTheDocument();
+  });
+
+  test("once the GitHub App is created, the page says how to install it on repos", async () => {
+    stubApi();
+    render(<App />);
+
+    const link = await screen.findByRole("link", { name: /install diffwise-a1b2c3/i });
+    expect(link).toHaveAttribute("href", "https://github.com/apps/diffwise-a1b2c3/installations/new");
+    expect(screen.queryByRole("button", { name: "Create GitHub App" })).not.toBeInTheDocument();
+  });
+});
+
+describe("reviewing a Pull Request by URL", () => {
+  const url = "https://github.com/acme/shop/pull/7";
+  const byUrl = (pasted: string) => `/api/pull-requests/by-url?url=${encodeURIComponent(pasted)}`;
+
+  test("pasting a GitHub Pull Request URL starts a Review of that Pull Request on the chosen Model", async () => {
+    const fetch = stubApi(review, modelListing, { [byUrl(url)]: () => Response.json(pullRequest) });
+    render(<App />);
+    await screen.findByRole("combobox", { name: /model/i });
+
+    await userEvent.type(screen.getByRole("textbox", { name: "Pull Request URL" }), url);
+    await userEvent.click(screen.getByRole("button", { name: "Review" }));
+
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/reviews",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ pullRequest: { owner: "acme", repo: "shop", number: 7 }, modelProvider: "Ollama", model: "llama3.1:8b" }),
+      }),
+    );
+    expect(await screen.findByRole("region", { name: /review of acme\/shop#7/i })).toBeInTheDocument();
+  });
+
+  test.each([
+    ["isn't a GitHub Pull Request URL", 400, `"nope" isn't a GitHub Pull Request URL. Paste one like https://github.com/owner/repo/pull/123`],
+    ["is in a repo the GitHub App isn't installed on", 403, "The GitHub App diffwise-a1b2c3 isn't installed on acme/shop. Install it on that repo, then try again."],
+  ])("pasting something that %s shows the error, and no Review starts", async (_, status, error) => {
+    const pasted = status === 400 ? "nope" : url;
+    const fetch = stubApi(review, modelListing, { [byUrl(pasted)]: () => Response.json({ error }, { status }) });
+    render(<App />);
+    await screen.findByRole("combobox", { name: /model/i });
+
+    await userEvent.type(screen.getByRole("textbox", { name: "Pull Request URL" }), pasted);
+    await userEvent.click(screen.getByRole("button", { name: "Review" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(error);
+    expect(fetch).not.toHaveBeenCalledWith("/api/reviews", expect.anything());
+  });
 });

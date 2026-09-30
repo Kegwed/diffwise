@@ -1,4 +1,6 @@
 import type { ChatRequest, ModelProvider } from "../src/model-provider.ts";
+import { fixtureForge } from "../src/fixture-forge.ts";
+import { ForgeAccessError, type Forge, type PullRequestSnapshot } from "../src/forge.ts";
 
 /** Scripts a Model call that never answers, until the request's signal aborts it. */
 export const hang = Symbol("hang");
@@ -38,4 +40,24 @@ export function fakeModelProvider(
     },
   };
   return { provider, requests };
+}
+
+export interface FakeForgeOptions {
+  /** Repos, as "owner/repo", whose Pull Requests the GitHub App can't read because it isn't installed on them. */
+  notInstalledOn?: string[];
+}
+
+/** Serves the given Pull Requests like the fixture Forge, except in repos the GitHub App isn't installed on. */
+export function fakeForge(pullRequests: PullRequestSnapshot[], { notInstalledOn = [] }: FakeForgeOptions = {}): Forge {
+  const forge = fixtureForge(pullRequests);
+  return {
+    listPullRequests: forge.listPullRequests,
+    async getPullRequest(ref) {
+      const repo = `${ref.owner}/${ref.repo}`;
+      if (notInstalledOn.includes(repo)) {
+        throw new ForgeAccessError(`The GitHub App isn't installed on ${repo}. Install it on that repo, then try again.`);
+      }
+      return forge.getPullRequest(ref);
+    },
+  };
 }

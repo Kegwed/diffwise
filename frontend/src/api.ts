@@ -1,5 +1,6 @@
 import type {
   ApiError,
+  GitHubAppStatus,
   ModelChoice,
   ModelProviderListing,
   PullRequestRef,
@@ -20,6 +21,15 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 
 export function listPullRequests(): Promise<PullRequestSummary[]> {
   return request("/api/pull-requests");
+}
+
+export function getGitHubApp(): Promise<GitHubAppStatus> {
+  return request("/api/github-app");
+}
+
+/** The Pull Request a pasted GitHub Pull Request URL points at; throws with a message saying what's wrong otherwise. */
+export function findPullRequestByUrl(url: string): Promise<PullRequestSummary> {
+  return request(`/api/pull-requests/by-url?url=${encodeURIComponent(url)}`);
 }
 
 export function listModels(): Promise<ModelProviderListing[]> {

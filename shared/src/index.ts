@@ -70,6 +70,11 @@ export type ModelProviderListing =
   | { modelProvider: string; status: "available"; models: string[] }
   | { modelProvider: string; status: "unavailable"; reason: string };
 
+/** Whether Diffwise's GitHub App has been created, and if so where to install it on repos. */
+export type GitHubAppStatus =
+  | { status: "not-created" }
+  | { status: "created"; name: string; htmlUrl: string; installUrl: string };
+
 export interface ApiError {
   error: string;
 }

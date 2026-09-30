@@ -15,5 +15,11 @@ export interface PullRequestSnapshot extends PullRequestSummary {
 /** Where Pull Requests come from (GitHub, or fixtures). */
 export interface Forge {
   listPullRequests(): Promise<PullRequestSummary[]>;
+  /** Undefined if there's no such Pull Request; throws a ForgeAccessError if Diffwise can't read its repo. */
   getPullRequest(ref: PullRequestRef): Promise<PullRequestSnapshot | undefined>;
+}
+
+/** Diffwise can't read a repo, e.g. because the GitHub App isn't installed on it. The message says what to do. */
+export class ForgeAccessError extends Error {
+  override name = "ForgeAccessError";
 }

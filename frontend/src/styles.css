@@ -114,6 +114,38 @@ a {
   color: var(--ink);
 }
 
+.pull-request-url {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.pull-request-url label {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-2);
+  font: var(--type-label);
+  white-space: nowrap;
+}
+
+.pull-request-url input {
+  flex: 1;
+  min-width: 0;
+  font: var(--type-code);
+  height: 28px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.github-connection {
+  margin-bottom: var(--space-8);
+}
+
 .unavailable-providers {
   margin: var(--space-2) 0 0;
   padding-left: var(--space-6);
