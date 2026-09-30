@@ -78,6 +78,7 @@ function FindingItem({ finding }: { finding: Finding }) {
       file={finding.file}
       lines={lines}
       title={finding.title}
+      headingLevel={4}
       suggestedFix={finding.suggestedFix}
       securityReference={finding.securityReference}
     >

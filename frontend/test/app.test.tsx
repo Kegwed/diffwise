@@ -66,7 +66,7 @@ const modelListing: ModelProviderListing[] = [
 function findingTitles(file: HTMLElement) {
   return within(file)
     .getAllByRole("article")
-    .map((finding) => within(finding).getByRole("heading").textContent);
+    .map((finding) => within(finding).getByRole("heading", { level: 4 }).textContent);
 }
 
 /** Stubs fetch with the backend's API responses. */

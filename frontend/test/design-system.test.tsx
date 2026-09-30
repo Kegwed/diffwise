@@ -8,22 +8,22 @@ test.each([
   ["high", "High", 3],
   ["medium", "Medium", 2],
   ["low", "Low", 1],
-] as const)("%s Severity reads without colour: a %s label and %i lit bars", (level, label, bars) => {
-  const { container } = render(<Severity level={level} />);
+] as const)("%s Severity reads without colour: a %s label and %i lit bars", (severity, label, bars) => {
+  const { container } = render(<Severity severity={severity} />);
 
   expect(screen.getByText(label)).toBeInTheDocument();
   expect(container.querySelectorAll(".dw-sev-bar.is-on")).toHaveLength(bars);
 });
 
 test("a Severity label can be overridden, but never left out", () => {
-  render(<Severity level="high">Hoch</Severity>);
+  render(<Severity severity="high">Hoch</Severity>);
 
   expect(screen.getByText("Hoch")).toBeInTheDocument();
   expect(screen.queryByText("High")).not.toBeInTheDocument();
 });
 
-test("an empty Severity label falls back to the level name", () => {
-  render(<Severity level="high">{""}</Severity>);
+test("an empty Severity label falls back to the Severity's name", () => {
+  render(<Severity severity="high">{""}</Severity>);
 
   expect(screen.getByText("High")).toBeInTheDocument();
 });
@@ -62,6 +62,14 @@ test("a Finding shows its Severity, file and lines, title, explanation and a col
   expect(fix).not.toBeVisible();
   await userEvent.click(screen.getByText("Suggested Fix"));
   expect(fix).toBeVisible();
+});
+
+test("a Finding's title is an h3 unless it sits under a different heading", () => {
+  const { rerender } = render(<Finding kind="bad-practice" severity="low" title="Magic number" />);
+  expect(screen.getByRole("heading", { name: "Magic number" })).toHaveProperty("tagName", "H3");
+
+  rerender(<Finding kind="bad-practice" severity="low" title="Magic number" headingLevel={4} />);
+  expect(screen.getByRole("heading", { name: "Magic number" })).toHaveProperty("tagName", "H4");
 });
 
 test("a Finding without a Suggested Fix has no Suggested Fix section", () => {
