@@ -133,6 +133,67 @@ describe("Reviews", () => {
     expect(review.findings).toEqual([{ ...sqlInjection, file: "src/users.ts" }]);
   });
 
+  describe("Findings stay on the lines the Pull Request adds or modifies", () => {
+    // New-version lines: 1 unchanged, 2 modified, 3 unchanged; then 10 unchanged, 11 and 12 added, 13 unchanged;
+    // then old line 20 removed, and old line 21 unchanged as new line 22.
+    const twoHunks: PullRequestSnapshot = {
+      ...pullRequest,
+      files: [
+        {
+          path: "src/users.ts",
+          patch: [
+            "@@ -1,3 +1,3 @@",
+            " import { db } from './db';",
+            "-const limit = 10;",
+            "+const limit = 20;",
+            " export { limit };",
+            "@@ -10,2 +10,4 @@",
+            " function lookup() {",
+            "+  log();",
+            "+  return db.all();",
+            " }",
+            "@@ -20,2 +22,1 @@",
+            "-  legacy();",
+            " }",
+          ].join("\n"),
+        },
+      ],
+    };
+
+    test.each([
+      ["a modified line", 2, 2],
+      ["a run of added lines", 11, 12],
+    ])("a Finding on %s is kept", async (_, startLine, endLine) => {
+      const finding = { ...sqlInjection, startLine, endLine };
+      const { app } = setup([twoHunks], [{ findings: [finding] }]);
+
+      const review = (await (await startReview(app, twoHunks)).json()) as Review;
+
+      expect(review.findings).toEqual([{ ...finding, file: "src/users.ts" }]);
+    });
+
+    test.each([
+      ["an unchanged line", 1, 1],
+      ["a range running onto an unchanged line", 2, 3],
+      ["a range starting on an unchanged line", 10, 11],
+      ["a range spanning the gap between hunks", 2, 11],
+      ["a line outside the diff", 5, 5],
+      ["a removed line, by its old line number", 20, 20],
+      ["a made-up line past the end of the file", 99, 120],
+    ])("a Finding on %s is dropped", async (_, startLine, endLine) => {
+      const { app, modelRequests } = setup(
+        [twoHunks],
+        [{ findings: [{ ...sqlInjection, startLine, endLine }, { ...sqlInjection, startLine: 11, endLine: 11 }] }],
+      );
+
+      const review = (await (await startReview(app, twoHunks)).json()) as Review;
+
+      expect(modelRequests).toHaveLength(1);
+      expect(review.fileOutcomes).toEqual([reviewed("src/users.ts")]);
+      expect(review.findings).toEqual([{ ...sqlInjection, startLine: 11, endLine: 11, file: "src/users.ts" }]);
+    });
+  });
+
   test("each changed file is reviewed by its own Model call", async () => {
     const twoFiles: PullRequestSnapshot = {
       ...pullRequest,
@@ -231,14 +292,22 @@ describe("Reviews", () => {
     expect(await (await app.request(`/api/reviews/${review.id}`)).json()).toEqual(review);
   });
 
-  test("the Model sees the Pull Request's title and description", async () => {
-    const { app, modelRequests } = setup([pullRequest], [{ findings: [] }]);
+  test("each file's Model call sees the Pull Request's title and description, labelled as the author's claims", async () => {
+    const twoFiles: PullRequestSnapshot = {
+      ...pullRequest,
+      files: [pullRequest.files[0]!, { path: "src/config.ts", patch: "@@ -0,0 +1 @@\n+export const retries = 3;" }],
+    };
+    const { app, modelRequests } = setup([twoFiles], [{ findings: [] }, { findings: [] }]);
 
-    await startReview(app, pullRequest);
+    await startReview(app, twoFiles);
 
-    const prompt = modelRequests[0]!.messages.map((m) => m.content).join("\n");
-    expect(prompt).toContain("Add user lookup");
-    expect(prompt).toContain("Adds an endpoint to look users up by name.");
+    expect(modelRequests).toHaveLength(2);
+    for (const request of modelRequests) {
+      const prompt = request.messages.map((m) => m.content).join("\n");
+      expect(prompt).toContain("Pull request title (author's claim): Add user lookup");
+      expect(prompt).toContain("Pull request description (author's claim):\nAdds an endpoint to look users up by name.");
+      expect(prompt).toMatch(/author's claims, not facts/);
+    }
   });
 
   test("the Model sees the diff with each added or unchanged line numbered as in the new version of the file", async () => {

@@ -127,8 +127,9 @@ async function attemptReview(
     const issue = parsed.error.issues[0]!;
     return { ok: false, reason: `the Model's reply did not match the Finding schema (${issue.path.join(".")}: ${issue.message})` };
   }
+  const changedLines = addedOrModifiedLines(file.patch);
   const findings = parsed.data.findings
-    .filter((finding) => finding.endLine >= finding.startLine)
+    .filter((finding) => liesWithin(finding, changedLines))
     .map(({ suggestedFix, securityReference, ...rest }): Finding => ({
       ...rest,
       // Models often send null for an optional field they leave out. A Security Reference only belongs on a Security Issue.
@@ -137,6 +138,22 @@ async function attemptReview(
       file: file.path,
     }));
   return { ok: true, findings };
+}
+
+/** The new-version line numbers a patch adds or modifies; a modified line is an added line replacing a removed one. */
+function addedOrModifiedLines(patch: string): Set<number> {
+  return new Set(
+    parsePatch(patch).flatMap((hunk) => hunk.lines.flatMap((line) => (line.type === "added" ? [line.newLine!] : []))),
+  );
+}
+
+/** Whether a Finding's range runs forwards and every line in it is one of the given lines. */
+function liesWithin({ startLine, endLine }: Pick<Finding, "startLine" | "endLine">, lines: Set<number>): boolean {
+  if (endLine < startLine) return false;
+  for (let line = startLine; line <= endLine; line++) {
+    if (!lines.has(line)) return false;
+  }
+  return true;
 }
 
 function whenAborted(signal: AbortSignal): Promise<never> {
