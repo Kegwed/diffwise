@@ -13,6 +13,21 @@ const pullRequest: PullRequestSummary = {
   headCommit: "abc1234def",
 };
 
+const usersPatch = [
+  "@@ -1,3 +1,8 @@",
+  " import { db } from './db';",
+  "-export const findUser = (id) => db.get(id);",
+  "+export function findUser(name: string) {",
+  "+  return db.query(`SELECT * FROM users WHERE name = '${name}'`);",
+  "+}",
+  "+export function load() {",
+  "+  try { return db.load(); } catch {}",
+  "+}",
+  " export default db;",
+].join("\n");
+
+const configPatch = ["@@ -0,0 +1,2 @@", "+export const timeout = 30000;", "+export const retries = 3;"].join("\n");
+
 const review: Review = {
   id: "review-1",
   pullRequest: { owner: "acme", repo: "shop", number: 7 },
@@ -21,8 +36,8 @@ const review: Review = {
   model: "llama3.1:8b",
   createdAt: "2026-09-27T10:00:00.000Z",
   fileOutcomes: [
-    { file: "src/users.ts", outcome: "reviewed" },
-    { file: "src/config.ts", outcome: "reviewed" },
+    { file: "src/users.ts", outcome: "reviewed", patch: usersPatch },
+    { file: "src/config.ts", outcome: "reviewed", patch: configPatch },
   ],
   findings: [
     {
@@ -69,6 +84,31 @@ function findingTitles(file: HTMLElement) {
     .map((finding) => within(finding).getByRole("heading", { level: 4 }).textContent);
 }
 
+/** The diff's rows of code (not the rows holding Findings), each with its old and new line number cells. */
+function codeRows(file: HTMLElement) {
+  return within(file)
+    .getAllByRole("row")
+    .filter((row) => within(row).queryByRole("article") === null);
+}
+
+/** The code row showing a line of the new version of the file. */
+function newLineRow(file: HTMLElement, newLine: number) {
+  const row = codeRows(file).find((r) => (r as HTMLTableRowElement).cells[1]?.textContent === String(newLine));
+  if (!row) throw new Error(`No row for new line ${newLine}`);
+  return row as HTMLTableRowElement;
+}
+
+/** The titles of the Findings shown directly beneath a line of the new version of the file, in order. */
+function findingsBeneath(file: HTMLElement, newLine: number) {
+  const titles: (string | null)[] = [];
+  for (let row = newLineRow(file, newLine).nextElementSibling; row; row = row.nextElementSibling) {
+    const finding = within(row as HTMLElement).queryByRole("article");
+    if (!finding) break;
+    titles.push(within(finding).getByRole("heading", { level: 4 }).textContent);
+  }
+  return titles;
+}
+
 /** Stubs fetch with the backend's API responses. */
 function stubApi(startedReview: Review = review, models: ModelProviderListing[] = modelListing) {
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
@@ -81,7 +121,7 @@ function stubApi(startedReview: Review = review, models: ModelProviderListing[] 
   return fetch;
 }
 
-test("reviewing a fixture Pull Request shows its Findings grouped by file", async () => {
+test("reviewing a fixture Pull Request shows each file's diff with every Finding beneath its lines", async () => {
   const fetch = stubApi();
   render(<App />);
 
@@ -96,15 +136,50 @@ test("reviewing a fixture Pull Request shows its Findings grouped by file", asyn
   );
 
   const users = await screen.findByRole("region", { name: "src/users.ts" });
-  expect(findingTitles(users)).toEqual(["SQL injection", "Swallowed error"]);
+  expect(findingsBeneath(users, 3)).toEqual(["SQL injection"]);
+  expect(findingsBeneath(users, 6)).toEqual(["Swallowed error"]);
+  expect(findingsBeneath(users, 5)).toEqual([]);
   expect(within(users).getByText("CWE-89")).toBeInTheDocument();
   expect(within(users).getByText("src/users.ts:3")).toBeInTheDocument();
   expect(within(users).getByText("src/users.ts:5–6")).toBeInTheDocument();
+  expect(within(users).getByText("The name is interpolated straight into the SQL string.")).toBeInTheDocument();
+  expect(within(users).getByText("Suggested Fix")).toBeInTheDocument();
 
   const config = screen.getByRole("region", { name: "src/config.ts" });
-  expect(findingTitles(config)).toEqual(["Magic number"]);
+  expect(findingsBeneath(config, 1)).toEqual([]);
+  expect(findingsBeneath(config, 2)).toEqual(["Magic number"]);
+});
 
-  expect(screen.getByRole("region", { name: /review of/i })).toHaveTextContent(/llama3\.1:8b via Ollama/);
+test("the diff is GitHub-style: hunk headers, then each line with its old and new line numbers and its marker", async () => {
+  stubApi();
+  render(<App />);
+
+  await userEvent.click(await screen.findByRole("button", { name: /review/i }));
+
+  const users = await screen.findByRole("region", { name: "src/users.ts" });
+  expect(within(users).getByText("@@ -1,3 +1,8 @@")).toBeInTheDocument();
+  expect(codeRows(users).map((row) => [...(row as HTMLTableRowElement).cells].map((cell) => cell.textContent))).toEqual([
+    ["@@ -1,3 +1,8 @@"],
+    ["1", "1", " import { db } from './db';"],
+    ["2", "", "-export const findUser = (id) => db.get(id);"],
+    ["", "2", "+export function findUser(name: string) {"],
+    ["", "3", "+  return db.query(`SELECT * FROM users WHERE name = '${name}'`);"],
+    ["", "4", "+}"],
+    ["", "5", "+export function load() {"],
+    ["", "6", "+  try { return db.load(); } catch {}"],
+    ["", "7", "+}"],
+    ["3", "8", " export default db;"],
+  ]);
+});
+
+test("the header shows the Model and the head commit the Review covered", async () => {
+  stubApi();
+  render(<App />);
+
+  await userEvent.click(await screen.findByRole("button", { name: /review/i }));
+
+  const header = await screen.findByRole("region", { name: /review of acme\/shop#7/i });
+  expect(header).toHaveTextContent(/llama3\.1:8b via Ollama at abc1234/);
 });
 
 test("each Pull Request has a secondary Run review button", async () => {
@@ -115,17 +190,16 @@ test("each Pull Request has a secondary Run review button", async () => {
   expect(button).toHaveClass("dw-btn-secondary", "dw-btn-sm");
 });
 
-test("within each file, Findings are sorted by Severity, highest first, then by line", async () => {
+test("Findings beneath the same line are stacked by Severity, highest first, then by line", async () => {
   const finding = review.findings[1]!;
   stubApi({
     ...review,
-    fileOutcomes: [{ file: "src/config.ts", outcome: "reviewed" }],
+    fileOutcomes: [{ file: "src/config.ts", outcome: "reviewed", patch: configPatch }],
     findings: [
-      { ...finding, severity: "low", startLine: 1, endLine: 1, title: "Low at 1" },
-      { ...finding, severity: "high", startLine: 9, endLine: 9, title: "High at 9" },
-      { ...finding, severity: "critical", startLine: 20, endLine: 22, title: "Critical at 20" },
-      { ...finding, severity: "high", startLine: 4, endLine: 7, title: "High at 4" },
+      { ...finding, severity: "low", startLine: 2, endLine: 2, title: "Low at 2" },
       { ...finding, severity: "medium", startLine: 2, endLine: 2, title: "Medium at 2" },
+      { ...finding, severity: "medium", startLine: 1, endLine: 2, title: "Medium at 1–2" },
+      { ...finding, severity: "critical", startLine: 2, endLine: 2, title: "Critical at 2" },
     ],
   });
   render(<App />);
@@ -133,7 +207,70 @@ test("within each file, Findings are sorted by Severity, highest first, then by 
   await userEvent.click(await screen.findByRole("button", { name: /review/i }));
 
   const config = await screen.findByRole("region", { name: "src/config.ts" });
-  expect(findingTitles(config)).toEqual(["Critical at 20", "High at 4", "High at 9", "Medium at 2", "Low at 1"]);
+  expect(findingsBeneath(config, 2)).toEqual(["Critical at 2", "Medium at 1–2", "Medium at 2", "Low at 2"]);
+});
+
+test("Findings on lines the diff doesn't show are listed after it, by Severity, highest first, then by line", async () => {
+  const finding = review.findings[1]!;
+  stubApi({
+    ...review,
+    fileOutcomes: [{ file: "src/config.ts", outcome: "reviewed", patch: configPatch }],
+    findings: [
+      { ...finding, severity: "low", startLine: 1, endLine: 1, title: "Low at 1" },
+      { ...finding, severity: "high", startLine: 9, endLine: 9, title: "High at 9" },
+      { ...finding, severity: "critical", startLine: 20, endLine: 22, title: "Critical at 20" },
+      { ...finding, severity: "high", startLine: 4, endLine: 7, title: "High at 4" },
+    ],
+  });
+  render(<App />);
+
+  await userEvent.click(await screen.findByRole("button", { name: /review/i }));
+
+  const config = await screen.findByRole("region", { name: "src/config.ts" });
+  expect(findingsBeneath(config, 1)).toEqual(["Low at 1"]);
+  expect(within(config).getByText(/on lines this diff doesn't show/i)).toBeInTheDocument();
+  expect(findingTitles(config)).toEqual(["Low at 1", "Critical at 20", "High at 4", "High at 9"]);
+});
+
+test.each([
+  ["ends with a newline", `${configPatch}\n`],
+  ["has Windows line endings", `${configPatch.replaceAll("\n", "\r\n")}\r\n`],
+])("a patch that %s shows only the lines its hunks hold", async (_, patch) => {
+  const finding = review.findings[1]!;
+  stubApi({
+    ...review,
+    fileOutcomes: [{ file: "src/config.ts", outcome: "reviewed", patch }],
+    findings: [{ ...finding, startLine: 3, endLine: 3, title: "Past the end" }],
+  });
+  render(<App />);
+
+  await userEvent.click(await screen.findByRole("button", { name: /review/i }));
+
+  const config = await screen.findByRole("region", { name: "src/config.ts" });
+  expect(codeRows(config).map((row) => row.textContent)).toEqual([
+    "@@ -0,0 +1,2 @@",
+    "1+export const timeout = 30000;",
+    "2+export const retries = 3;",
+  ]);
+  expect(within(config).getByText(/on lines this diff doesn't show/i)).toBeInTheDocument();
+});
+
+test("a Review saved before diffs were kept lists each file's Findings without a diff", async () => {
+  stubApi({
+    ...review,
+    fileOutcomes: [
+      { file: "src/users.ts", outcome: "reviewed", patch: "" },
+      { file: "src/config.ts", outcome: "reviewed", patch: "" },
+    ],
+  });
+  render(<App />);
+
+  await userEvent.click(await screen.findByRole("button", { name: /review/i }));
+
+  const users = await screen.findByRole("region", { name: "src/users.ts" });
+  expect(within(users).queryByRole("table")).not.toBeInTheDocument();
+  expect(within(users).getByText(/saved before diffs were kept/i)).toBeInTheDocument();
+  expect(findingTitles(users)).toEqual(["SQL injection", "Swallowed error"]);
 });
 
 test("a Review with no Findings says so", async () => {
@@ -145,13 +282,13 @@ test("a Review with no Findings says so", async () => {
   expect(await screen.findByText(/no findings/i)).toBeInTheDocument();
 });
 
-test("each file shows its outcome, and skipped or failed files flag the Review's coverage as incomplete", async () => {
+test("skipped and failed files show their outcome and reason instead of a diff, and flag coverage as incomplete", async () => {
   stubApi({
     ...review,
     fileOutcomes: [
       { file: "package-lock.json", outcome: "skipped", reason: "Lockfile" },
-      { file: "src/users.ts", outcome: "reviewed" },
-      { file: "src/config.ts", outcome: "reviewed" },
+      { file: "src/users.ts", outcome: "reviewed", patch: usersPatch },
+      { file: "src/config.ts", outcome: "reviewed", patch: configPatch },
       { file: "src/report.ts", outcome: "failed", reason: "Failed twice. First attempt: the Model's reply was not valid JSON. Retry: the Model's reply was not valid JSON." },
     ],
   });
@@ -161,14 +298,17 @@ test("each file shows its outcome, and skipped or failed files flag the Review's
 
   const users = await screen.findByRole("region", { name: "src/users.ts" });
   expect(within(users).getByText("Reviewed")).toHaveClass("dw-badge-outline");
+  expect(within(users).getByRole("table", { name: "Diff of src/users.ts" })).toBeInTheDocument();
 
   const lockfile = screen.getByRole("region", { name: "package-lock.json" });
   expect(within(lockfile).getByText("Skipped")).toHaveClass("dw-badge-neutral");
   expect(within(lockfile).getByText("Lockfile")).toBeInTheDocument();
+  expect(within(lockfile).queryByRole("table")).not.toBeInTheDocument();
 
   const report = screen.getByRole("region", { name: "src/report.ts" });
   expect(within(report).getByText("Failed")).toHaveClass("dw-badge-neutral");
   expect(within(report).getByText(/not valid JSON/)).toBeInTheDocument();
+  expect(within(report).queryByRole("table")).not.toBeInTheDocument();
 
   const notice = screen.getByRole("note");
   expect(notice).toHaveTextContent(/incomplete coverage/i);

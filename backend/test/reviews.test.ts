@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { describe, expect, test } from "vitest";
 import type { ModelChoice, ModelProviderListing, PullRequestRef, Review } from "@diffwise/shared";
 import { createApp } from "../src/app.ts";
@@ -40,6 +44,11 @@ const sqlInjection = {
   securityReference: "CWE-89",
 };
 
+/** A reviewed File Outcome, whatever its patch. */
+function reviewed(file: string) {
+  return { file, outcome: "reviewed", patch: expect.any(String) };
+}
+
 function setup(pullRequests: PullRequestSnapshot[], modelResponses: unknown[], modelCallTimeoutMs?: number) {
   const modelProvider = fakeModelProvider(modelResponses);
   const app = createApp({
@@ -80,9 +89,18 @@ describe("Reviews", () => {
       headCommit: "abc1234",
       modelProvider: "Ollama",
       model: "test-model",
-      fileOutcomes: [{ file: "src/users.ts", outcome: "reviewed" }],
+      fileOutcomes: [reviewed("src/users.ts")],
       findings: [{ ...sqlInjection, file: "src/users.ts" }],
     });
+  });
+
+  test("a fetched Review carries each reviewed file's patch, so it can be shown as a diff", async () => {
+    const { app } = setup([pullRequest], [{ findings: [sqlInjection] }]);
+
+    const { id } = (await (await startReview(app, pullRequest)).json()) as Review;
+    const review = (await (await app.request(`/api/reviews/${id}`)).json()) as Review;
+
+    expect(review.fileOutcomes).toEqual([{ file: "src/users.ts", outcome: "reviewed", patch: pullRequest.files[0]!.patch }]);
   });
 
   test.each([
@@ -99,7 +117,7 @@ describe("Reviews", () => {
     const review = (await (await startReview(app, pullRequest)).json()) as Review;
 
     expect(modelRequests).toHaveLength(2);
-    expect(review.fileOutcomes).toEqual([{ file: "src/users.ts", outcome: "reviewed" }]);
+    expect(review.fileOutcomes).toEqual([reviewed("src/users.ts")]);
     expect(review.findings).toEqual([{ ...sqlInjection, file: "src/users.ts" }]);
   });
 
@@ -163,12 +181,12 @@ describe("Reviews", () => {
     expect(modelRequests[0]!.messages.map((m) => m.content).join("\n")).toContain("src/users.ts");
     expect(review.fileOutcomes).toEqual([
       { file: "package-lock.json", outcome: "skipped", reason: expect.stringMatching(/lockfile/i) },
-      { file: "src/users.ts", outcome: "reviewed" },
+      reviewed("src/users.ts"),
       { file: "web/vendor/app.min.js", outcome: "skipped", reason: expect.stringMatching(/minified/i) },
       { file: "dist/index.js", outcome: "skipped", reason: expect.stringMatching(/build output/i) },
       { file: "assets/logo.png", outcome: "skipped", reason: expect.stringMatching(/binary/i) },
       { file: "assets/icon.xyz", outcome: "skipped", reason: expect.stringMatching(/no diff/i) },
-      { file: "src/build/steps.ts", outcome: "reviewed" },
+      reviewed("src/build/steps.ts"),
     ]);
     expect(review.findings).toEqual([{ ...sqlInjection, file: "src/users.ts" }]);
   });
@@ -186,7 +204,7 @@ describe("Reviews", () => {
     expect(modelRequests).toHaveLength(1);
     expect(review.fileOutcomes).toEqual([
       { file: "src/generated.ts", outcome: "skipped", reason: expect.stringMatching(/too large/i) },
-      { file: "src/users.ts", outcome: "reviewed" },
+      reviewed("src/users.ts"),
     ]);
   });
 
@@ -207,7 +225,7 @@ describe("Reviews", () => {
     expect(modelRequests).toHaveLength(3);
     expect(review.fileOutcomes).toEqual([
       { file: "src/config.ts", outcome: "failed", reason: expect.stringMatching(/JSON/) },
-      { file: "src/users.ts", outcome: "reviewed" },
+      reviewed("src/users.ts"),
     ]);
     expect(review.findings).toEqual([{ ...sqlInjection, file: "src/users.ts" }]);
     expect(await (await app.request(`/api/reviews/${review.id}`)).json()).toEqual(review);
@@ -221,6 +239,25 @@ describe("Reviews", () => {
     const prompt = modelRequests[0]!.messages.map((m) => m.content).join("\n");
     expect(prompt).toContain("Add user lookup");
     expect(prompt).toContain("Adds an endpoint to look users up by name.");
+  });
+
+  test("the Model sees the diff with each added or unchanged line numbered as in the new version of the file", async () => {
+    const twoHunks: PullRequestSnapshot = {
+      ...pullRequest,
+      files: [
+        {
+          path: "src/users.ts",
+          patch: ["@@ -1,2 +1,2 @@", " import { db } from './db';", "-const limit = 10;", "+const limit = 20;", "@@ -9 +9,2 @@", " }", "+export {};", "\\ No newline at end of file"].join("\n"),
+        },
+      ],
+    };
+    const { app, modelRequests } = setup([twoHunks], [{ findings: [] }]);
+
+    await startReview(app, twoHunks);
+
+    expect(modelRequests[0]!.messages.at(-1)!.content).toContain(
+      ["@@ -1,2 +1,2 @@", "   1  import { db } from './db';", "     -const limit = 10;", "   2 +const limit = 20;", "@@ -9 +9,2 @@", "   9  }", "  10 +export {};"].join("\n"),
+    );
   });
 
   test("starting a Review of an unknown Pull Request is a 404", async () => {
@@ -271,7 +308,7 @@ describe("Reviews", () => {
     const review = (await (await startReview(app, pullRequest)).json()) as Review;
 
     expect(modelRequests).toHaveLength(2);
-    expect(review.fileOutcomes).toEqual([{ file: "src/users.ts", outcome: "reviewed" }]);
+    expect(review.fileOutcomes).toEqual([reviewed("src/users.ts")]);
     expect(review.findings).toEqual([{ ...sqlInjection, file: "src/users.ts" }]);
   });
 
@@ -291,7 +328,7 @@ describe("Reviews", () => {
 
     const review = (await (await startReview(app, pullRequest)).json()) as Review;
 
-    expect(review.fileOutcomes).toEqual([{ file: "src/users.ts", outcome: "reviewed" }]);
+    expect(review.fileOutcomes).toEqual([reviewed("src/users.ts")]);
     expect(review.findings).toEqual([{ ...sqlInjection, file: "src/users.ts" }]);
   });
 
@@ -317,8 +354,36 @@ describe("Reviews", () => {
     const review = (await (await startReview(app, pullRequest)).json()) as Review;
 
     expect(modelRequests).toHaveLength(2);
-    expect(review.fileOutcomes).toEqual([{ file: "src/users.ts", outcome: "reviewed" }]);
+    expect(review.fileOutcomes).toEqual([reviewed("src/users.ts")]);
     expect(review.findings).toEqual([{ ...sqlInjection, file: "src/users.ts" }]);
+  });
+});
+
+describe("Reviews saved by an earlier version", () => {
+  test("a Review saved before patches were kept still loads, its reviewed files with an empty patch", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "diffwise-"));
+    try {
+      const path = join(dir, "diffwise.db");
+      const old = new DatabaseSync(path);
+      old.exec(`
+        CREATE TABLE reviews (id TEXT PRIMARY KEY, owner TEXT NOT NULL, repo TEXT NOT NULL, number INTEGER NOT NULL,
+          head_commit TEXT NOT NULL, model_provider TEXT NOT NULL, model TEXT NOT NULL, created_at TEXT NOT NULL);
+        CREATE TABLE file_outcomes (review_id TEXT NOT NULL REFERENCES reviews(id), position INTEGER NOT NULL,
+          file TEXT NOT NULL, outcome TEXT NOT NULL, reason TEXT, PRIMARY KEY (review_id, position));
+        INSERT INTO reviews VALUES ('old', 'acme', 'shop', 7, 'abc1234', 'Ollama', 'test-model', '2026-09-01T00:00:00.000Z');
+        INSERT INTO file_outcomes VALUES ('old', 0, 'src/users.ts', 'reviewed', NULL);
+      `);
+      old.close();
+      const db = openDatabase(path);
+      const app = createApp({ forge: fixtureForge([pullRequest]), modelProviders: [], db });
+
+      const review = (await (await app.request("/api/reviews/old")).json()) as Review;
+      db.close();
+
+      expect(review.fileOutcomes).toEqual([{ file: "src/users.ts", outcome: "reviewed", patch: "" }]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

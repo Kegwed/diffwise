@@ -33,9 +33,14 @@ export interface Finding {
   securityReference?: string;
 }
 
-/** What happened to one changed file within a Review. */
+/** What happened to one changed file within a Review. A reviewed file keeps the patch it was reviewed from. */
 export type FileOutcome =
-  | { file: string; outcome: "reviewed" }
+  | {
+      file: string;
+      outcome: "reviewed";
+      /** Unified diff hunks, as GitHub reports them. Empty for a Review saved before patches were kept. */
+      patch: string;
+    }
   | { file: string; outcome: "skipped" | "failed"; reason: string };
 
 /** A Model, on the Model Provider that offers it. */
@@ -68,3 +73,5 @@ export type ModelProviderListing =
 export interface ApiError {
   error: string;
 }
+
+export { DIFF_MARKERS, parsePatch, type DiffHunk, type DiffLine } from "./patch.ts";

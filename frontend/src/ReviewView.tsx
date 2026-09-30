@@ -1,5 +1,6 @@
 import { SEVERITIES, type FileOutcome, type Finding, type Review } from "@diffwise/shared";
-import { Badge, Finding as FindingCard } from "./design-system/index.ts";
+import { DiffView } from "./DiffView.tsx";
+import { Badge } from "./design-system/index.ts";
 
 const OUTCOME_LABELS: Record<FileOutcome["outcome"], string> = {
   reviewed: "Reviewed",
@@ -7,7 +8,7 @@ const OUTCOME_LABELS: Record<FileOutcome["outcome"], string> = {
   failed: "Failed",
 };
 
-export function FindingsList({ review }: { review: Review }) {
+export function ReviewView({ review }: { review: Review }) {
   const byFile = Map.groupBy(review.findings.toSorted(bySeverityThenLine), (finding) => finding.file);
   const outcomes = new Map(review.fileOutcomes.map((outcome) => [outcome.file, outcome]));
   // Outcome order first; Reviews saved before File Outcomes existed only have their Findings' files.
@@ -20,13 +21,12 @@ export function FindingsList({ review }: { review: Review }) {
         Review of {owner}/{repo}#{number}
       </h2>
       <p className="caption">
-        {review.model} via {review.modelProvider} at <code>{review.headCommit.slice(0, 7)}</code>
+        {review.model} via {review.modelProvider} at <code title={review.headCommit}>{review.headCommit.slice(0, 7)}</code>
       </p>
       <CoverageNotice fileOutcomes={review.fileOutcomes} />
       {byFile.size === 0 && <p>No Findings.</p>}
       {files.map((file) => {
         const outcome = outcomes.get(file);
-        const findings = byFile.get(file) ?? [];
         return (
           <section key={file} aria-label={file} className="file">
             <header className="file-head">
@@ -38,9 +38,9 @@ export function FindingsList({ review }: { review: Review }) {
               )}
               {outcome && outcome.outcome !== "reviewed" && <p className="caption">{outcome.reason}</p>}
             </header>
-            {findings.map((finding, i) => (
-              <FindingItem key={i} finding={finding} />
-            ))}
+            {(!outcome || outcome.outcome === "reviewed") && (
+              <DiffView file={file} patch={outcome?.patch ?? ""} findings={byFile.get(file) ?? []} />
+            )}
           </section>
         );
       })}
@@ -66,23 +66,5 @@ function CoverageNotice({ fileOutcomes }: { fileOutcomes: FileOutcome[] }) {
 function bySeverityThenLine(a: Finding, b: Finding) {
   return (
     SEVERITIES.indexOf(b.severity) - SEVERITIES.indexOf(a.severity) || a.startLine - b.startLine || a.endLine - b.endLine
-  );
-}
-
-function FindingItem({ finding }: { finding: Finding }) {
-  const lines = finding.startLine === finding.endLine ? finding.startLine : `${finding.startLine}–${finding.endLine}`;
-  return (
-    <FindingCard
-      kind={finding.kind}
-      severity={finding.severity}
-      file={finding.file}
-      lines={lines}
-      title={finding.title}
-      headingLevel={4}
-      suggestedFix={finding.suggestedFix}
-      securityReference={finding.securityReference}
-    >
-      <p>{finding.explanation}</p>
-    </FindingCard>
   );
 }

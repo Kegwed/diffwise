@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { FINDING_KINDS, SEVERITIES, type FileOutcome, type Finding, type Review } from "@diffwise/shared";
+import { DIFF_MARKERS, FINDING_KINDS, parsePatch, SEVERITIES, type FileOutcome, type Finding, type Review } from "@diffwise/shared";
 import type { ChangedFile, PullRequestSnapshot } from "./forge.ts";
 import type { ModelProvider } from "./model-provider.ts";
 import { skipReason } from "./skip-list.ts";
@@ -56,7 +56,7 @@ export async function runReview(
     const result = await reviewFile(pullRequest, file, settings);
     if (result.ok) {
       findings.push(...result.findings);
-      fileOutcomes.push({ file: file.path, outcome: "reviewed" });
+      fileOutcomes.push({ file: file.path, outcome: "reviewed", patch: file.patch });
     } else {
       fileOutcomes.push({ file: file.path, outcome: "failed", reason: result.reason });
     }
@@ -163,17 +163,13 @@ ${numberPatchLines(file.patch)}`;
 
 /** Prefixes each added or unchanged line of a unified diff with its line number in the new version of the file. */
 function numberPatchLines(patch: string): string {
-  let newLine = 0;
-  return patch
-    .split("\n")
-    .map((line) => {
-      const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
-      if (hunk) {
-        newLine = Number(hunk[1]);
-        return line;
-      }
-      if (line.startsWith("-") || line.startsWith("\\")) return `     ${line}`;
-      return `${String(newLine++).padStart(4)} ${line}`;
-    })
+  return parsePatch(patch)
+    .flatMap((hunk) => [
+      hunk.header,
+      ...hunk.lines.map((line) => {
+        const number = line.newLine === undefined ? "" : String(line.newLine);
+        return `${number.padStart(4)} ${DIFF_MARKERS[line.type]}${line.text}`;
+      }),
+    ])
     .join("\n");
 }

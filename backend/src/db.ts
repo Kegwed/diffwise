@@ -39,15 +39,20 @@ export function openDatabase(path: string): Database {
       file TEXT NOT NULL,
       outcome TEXT NOT NULL,
       reason TEXT,
+      patch TEXT,
       PRIMARY KEY (review_id, position)
     );
   `);
-  const reviewColumns = db.prepare("PRAGMA table_info(reviews)").all() as unknown as { name: string }[];
-  if (!reviewColumns.some((column) => column.name === "model_provider")) {
-    // Reviews saved before Model Providers were configurable all ran on the Ollama preset.
-    db.exec(`ALTER TABLE reviews ADD COLUMN model_provider TEXT NOT NULL DEFAULT '${OLLAMA}'`);
-  }
+  // Reviews saved before Model Providers were configurable all ran on the Ollama preset.
+  addColumnIfMissing(db, "reviews", "model_provider", `TEXT NOT NULL DEFAULT '${OLLAMA}'`);
+  // Reviews saved before patches were kept show their Findings without a diff.
+  addColumnIfMissing(db, "file_outcomes", "patch", "TEXT");
   return db;
+}
+
+function addColumnIfMissing(db: Database, table: string, column: string, definition: string): void {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as unknown as { name: string }[];
+  if (!columns.some(({ name }) => name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
 export function saveReview(db: Database, review: Review): void {
@@ -59,14 +64,15 @@ export function saveReview(db: Database, review: Review): void {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   const insertFileOutcome = db.prepare(
-    "INSERT INTO file_outcomes (review_id, position, file, outcome, reason) VALUES (?, ?, ?, ?, ?)",
+    "INSERT INTO file_outcomes (review_id, position, file, outcome, reason, patch) VALUES (?, ?, ?, ?, ?, ?)",
   );
   const { owner, repo, number } = review.pullRequest;
   db.exec("BEGIN");
   try {
     insertReview.run(review.id, owner, repo, number, review.headCommit, review.modelProvider, review.model, review.createdAt);
     review.fileOutcomes.forEach((o, position) => {
-      insertFileOutcome.run(review.id, position, o.file, o.outcome, o.outcome === "reviewed" ? null : o.reason);
+      const [reason, patch] = o.outcome === "reviewed" ? [null, o.patch] : [o.reason, null];
+      insertFileOutcome.run(review.id, position, o.file, o.outcome, reason, patch);
     });
     review.findings.forEach((f, position) => {
       insertFinding.run(
@@ -105,6 +111,7 @@ interface FileOutcomeRow {
   file: string;
   outcome: FileOutcome["outcome"];
   reason: string | null;
+  patch: string | null;
 }
 
 interface FindingRow {
@@ -142,7 +149,7 @@ export function getReview(db: Database, id: string): Review | undefined {
 
 function toFileOutcome(row: FileOutcomeRow): FileOutcome {
   return row.outcome === "reviewed"
-    ? { file: row.file, outcome: row.outcome }
+    ? { file: row.file, outcome: row.outcome, patch: row.patch ?? "" }
     : { file: row.file, outcome: row.outcome, reason: row.reason ?? "" };
 }
 

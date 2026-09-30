@@ -151,3 +151,77 @@ a {
 .file-head .caption {
   flex-basis: 100%;
 }
+
+/* Diff: code on surface-sunken, changed lines tinted with the diff tokens, line numbers and hunk headers muted. */
+
+.diff-scroll {
+  overflow-x: auto;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+
+.diff {
+  width: 100%;
+  border-collapse: collapse;
+  font: var(--type-code);
+}
+
+.diff td {
+  padding: 0 var(--space-2);
+  vertical-align: top;
+}
+
+.diff-num {
+  width: 1%;
+  min-width: 3ch;
+  text-align: right;
+  white-space: nowrap;
+  color: var(--ink-muted);
+  user-select: none;
+}
+
+.diff-code {
+  white-space: pre;
+}
+
+.diff-marker {
+  display: inline-block;
+  width: 2ch;
+  user-select: none;
+}
+
+.diff-hunk td {
+  padding: var(--space-1) var(--space-2);
+  color: var(--ink-muted);
+}
+
+.diff-added .diff-code {
+  background: var(--diff-add-soft);
+}
+
+.diff-added .diff-marker {
+  color: var(--diff-add);
+}
+
+.diff-removed .diff-code {
+  background: var(--diff-del-soft);
+}
+
+.diff-removed .diff-marker {
+  color: var(--diff-del);
+}
+
+.diff-finding td {
+  padding: var(--space-3) var(--space-4);
+  font: var(--type-body);
+  border-block: 1px solid var(--line);
+  background: var(--bg);
+}
+
+/* Keeps a Finding in view while a wide diff scrolls sideways. */
+.diff-finding-card {
+  position: sticky;
+  left: var(--space-4);
+  max-width: 720px;
+}

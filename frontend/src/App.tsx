@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { ModelChoice, ModelProviderListing, PullRequestSummary, Review } from "@diffwise/shared";
 import { listModels, listPullRequests, startReview } from "./api.ts";
 import { Button } from "./design-system/index.ts";
-import { FindingsList } from "./FindingsList.tsx";
+import { ReviewView } from "./ReviewView.tsx";
 import { firstModel, ModelPicker } from "./ModelPicker.tsx";
 
 export function App() {
@@ -66,7 +66,7 @@ export function App() {
         </ul>
       </section>
       {error && <p role="alert">{error}</p>}
-      {review && <FindingsList review={review} />}
+      {review && <ReviewView review={review} />}
     </main>
   );
 }
