@@ -67,7 +67,7 @@ export function ModelPicker({
         </label>
       )}
       {unusable.length > 0 && (
-        <ul className="meta unavailable-providers">
+        <ul className="caption unavailable-providers">
           {unusable.map((listing) => (
             <li key={listing.modelProvider}>
               {listing.modelProvider} is unavailable: {listing.reason}

@@ -62,6 +62,13 @@ const modelListing: ModelProviderListing[] = [
   { modelProvider: "OpenAI-compatible", status: "available", models: ["gpt-4o"] },
 ];
 
+/** The titles of the Findings in a file's region, in the order they're shown. */
+function findingTitles(file: HTMLElement) {
+  return within(file)
+    .getAllByRole("article")
+    .map((finding) => within(finding).getByRole("heading").textContent);
+}
+
 /** Stubs fetch with the backend's API responses. */
 function stubApi(startedReview: Review = review, models: ModelProviderListing[] = modelListing) {
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
@@ -89,17 +96,44 @@ test("reviewing a fixture Pull Request shows its Findings grouped by file", asyn
   );
 
   const users = await screen.findByRole("region", { name: "src/users.ts" });
-  expect(within(users).getAllByRole("heading", { level: 4 }).map((h) => h.textContent)).toEqual([
-    "SQL injection",
-    "Swallowed error",
-  ]);
+  expect(findingTitles(users)).toEqual(["SQL injection", "Swallowed error"]);
   expect(within(users).getByText("CWE-89")).toBeInTheDocument();
-  expect(within(users).getByText(/lines 5–6/i)).toBeInTheDocument();
+  expect(within(users).getByText("src/users.ts:3")).toBeInTheDocument();
+  expect(within(users).getByText("src/users.ts:5–6")).toBeInTheDocument();
 
   const config = screen.getByRole("region", { name: "src/config.ts" });
-  expect(within(config).getByRole("heading", { level: 4 })).toHaveTextContent("Magic number");
+  expect(findingTitles(config)).toEqual(["Magic number"]);
 
   expect(screen.getByRole("region", { name: /review of/i })).toHaveTextContent(/llama3\.1:8b via Ollama/);
+});
+
+test("each Pull Request has a secondary Run review button", async () => {
+  stubApi();
+  render(<App />);
+
+  const button = await screen.findByRole("button", { name: "Run review" });
+  expect(button).toHaveClass("dw-btn-secondary", "dw-btn-sm");
+});
+
+test("within each file, Findings are sorted by Severity, highest first, then by line", async () => {
+  const finding = review.findings[1]!;
+  stubApi({
+    ...review,
+    fileOutcomes: [{ file: "src/config.ts", outcome: "reviewed" }],
+    findings: [
+      { ...finding, severity: "low", startLine: 1, endLine: 1, title: "Low at 1" },
+      { ...finding, severity: "high", startLine: 9, endLine: 9, title: "High at 9" },
+      { ...finding, severity: "critical", startLine: 20, endLine: 22, title: "Critical at 20" },
+      { ...finding, severity: "high", startLine: 4, endLine: 7, title: "High at 4" },
+      { ...finding, severity: "medium", startLine: 2, endLine: 2, title: "Medium at 2" },
+    ],
+  });
+  render(<App />);
+
+  await userEvent.click(await screen.findByRole("button", { name: /review/i }));
+
+  const config = await screen.findByRole("region", { name: "src/config.ts" });
+  expect(findingTitles(config)).toEqual(["Critical at 20", "High at 4", "High at 9", "Medium at 2", "Low at 1"]);
 });
 
 test("a Review with no Findings says so", async () => {
@@ -126,14 +160,14 @@ test("each file shows its outcome, and skipped or failed files flag the Review's
   await userEvent.click(await screen.findByRole("button", { name: /review/i }));
 
   const users = await screen.findByRole("region", { name: "src/users.ts" });
-  expect(within(users).getByText("Reviewed")).toBeInTheDocument();
+  expect(within(users).getByText("Reviewed")).toHaveClass("dw-badge-outline");
 
   const lockfile = screen.getByRole("region", { name: "package-lock.json" });
-  expect(within(lockfile).getByText("Skipped")).toBeInTheDocument();
+  expect(within(lockfile).getByText("Skipped")).toHaveClass("dw-badge-neutral");
   expect(within(lockfile).getByText("Lockfile")).toBeInTheDocument();
 
   const report = screen.getByRole("region", { name: "src/report.ts" });
-  expect(within(report).getByText("Failed")).toBeInTheDocument();
+  expect(within(report).getByText("Failed")).toHaveClass("dw-badge-neutral");
   expect(within(report).getByText(/not valid JSON/)).toBeInTheDocument();
 
   const notice = screen.getByRole("note");

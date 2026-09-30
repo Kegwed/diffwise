@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ModelChoice, ModelProviderListing, PullRequestSummary, Review } from "@diffwise/shared";
 import { listModels, listPullRequests, startReview } from "./api.ts";
+import { Button } from "./design-system/index.ts";
 import { FindingsList } from "./FindingsList.tsx";
 import { firstModel, ModelPicker } from "./ModelPicker.tsx";
 
@@ -49,17 +50,17 @@ export function App() {
             <li key={`${pr.owner}/${pr.repo}#${pr.number}`}>
               <div>
                 <strong>{pr.title}</strong>
-                <div className="meta">
+                <div className="caption">
                   {pr.owner}/{pr.repo}#{pr.number} by {pr.author} at <code>{pr.headCommit.slice(0, 7)}</code>
                 </div>
               </div>
-              <button
-                type="button"
+              <Button
+                size="sm"
                 onClick={() => modelChoice && reviewPullRequest(pr, modelChoice)}
                 disabled={reviewing !== undefined || modelChoice === undefined}
               >
-                {reviewing === pr ? "Reviewing…" : "Review"}
-              </button>
+                {reviewing === pr ? "Reviewing…" : "Run review"}
+              </Button>
             </li>
           ))}
         </ul>

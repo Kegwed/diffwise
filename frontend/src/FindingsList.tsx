@@ -1,9 +1,5 @@
-import type { FileOutcome, Finding, Review } from "@diffwise/shared";
-
-const KIND_LABELS: Record<Finding["kind"], string> = {
-  "bad-practice": "Bad Practice",
-  "security-issue": "Security Issue",
-};
+import { SEVERITIES, type FileOutcome, type Finding, type Review } from "@diffwise/shared";
+import { Badge, Finding as FindingCard } from "./design-system/index.ts";
 
 const OUTCOME_LABELS: Record<FileOutcome["outcome"], string> = {
   reviewed: "Reviewed",
@@ -12,7 +8,7 @@ const OUTCOME_LABELS: Record<FileOutcome["outcome"], string> = {
 };
 
 export function FindingsList({ review }: { review: Review }) {
-  const byFile = Map.groupBy(review.findings, (finding) => finding.file);
+  const byFile = Map.groupBy(review.findings.toSorted(bySeverityThenLine), (finding) => finding.file);
   const outcomes = new Map(review.fileOutcomes.map((outcome) => [outcome.file, outcome]));
   // Outcome order first; Reviews saved before File Outcomes existed only have their Findings' files.
   const files = [...new Set([...outcomes.keys(), ...byFile.keys()])];
@@ -23,7 +19,7 @@ export function FindingsList({ review }: { review: Review }) {
       <h2 id="review">
         Review of {owner}/{repo}#{number}
       </h2>
-      <p className="meta">
+      <p className="caption">
         {review.model} via {review.modelProvider} at <code>{review.headCommit.slice(0, 7)}</code>
       </p>
       <CoverageNotice fileOutcomes={review.fileOutcomes} />
@@ -33,18 +29,18 @@ export function FindingsList({ review }: { review: Review }) {
         const findings = byFile.get(file) ?? [];
         return (
           <section key={file} aria-label={file} className="file">
-            <h3>
-              <code>{file}</code>
-              {outcome && <span className={`outcome ${outcome.outcome}`}>{OUTCOME_LABELS[outcome.outcome]}</span>}
-            </h3>
-            {outcome && outcome.outcome !== "reviewed" && <p className="meta outcome-reason">{outcome.reason}</p>}
-            {findings.length > 0 && (
-              <ul>
-                {findings.map((finding, i) => (
-                  <FindingItem key={i} finding={finding} />
-                ))}
-              </ul>
-            )}
+            <header className="file-head">
+              <h3>
+                <code>{file}</code>
+              </h3>
+              {outcome && (
+                <Badge tone={outcome.outcome === "reviewed" ? "outline" : "neutral"}>{OUTCOME_LABELS[outcome.outcome]}</Badge>
+              )}
+              {outcome && outcome.outcome !== "reviewed" && <p className="caption">{outcome.reason}</p>}
+            </header>
+            {findings.map((finding, i) => (
+              <FindingItem key={i} finding={finding} />
+            ))}
           </section>
         );
       })}
@@ -59,40 +55,33 @@ function CoverageNotice({ fileOutcomes }: { fileOutcomes: FileOutcome[] }) {
   });
   if (counts.length === 0) return null;
   return (
-    <p role="note" className="coverage-notice">
+    <p role="note" className="panel-sunken">
       <strong>Incomplete coverage:</strong> {counts.join(", ")}. No Findings in a file that wasn't reviewed doesn't
       mean it's clean.
     </p>
   );
 }
 
-function FindingItem({ finding }: { finding: Finding }) {
-  const lines =
-    finding.startLine === finding.endLine
-      ? `line ${finding.startLine}`
-      : `lines ${finding.startLine}–${finding.endLine}`;
+/** Highest Severity first, then by line, as the design system's Finding guidelines ask. */
+function bySeverityThenLine(a: Finding, b: Finding) {
   return (
-    <li className={`finding ${finding.kind}`}>
-      <div className="meta">
-        <span className={`severity ${finding.severity}`}>{finding.severity}</span> {KIND_LABELS[finding.kind]} ·{" "}
-        {lines}
-        {finding.securityReference && (
-          <>
-            {" · "}
-            <span>{finding.securityReference}</span>
-          </>
-        )}
-      </div>
-      <h4>{finding.title}</h4>
+    SEVERITIES.indexOf(b.severity) - SEVERITIES.indexOf(a.severity) || a.startLine - b.startLine || a.endLine - b.endLine
+  );
+}
+
+function FindingItem({ finding }: { finding: Finding }) {
+  const lines = finding.startLine === finding.endLine ? finding.startLine : `${finding.startLine}–${finding.endLine}`;
+  return (
+    <FindingCard
+      kind={finding.kind}
+      severity={finding.severity}
+      file={finding.file}
+      lines={lines}
+      title={finding.title}
+      suggestedFix={finding.suggestedFix}
+      securityReference={finding.securityReference}
+    >
       <p>{finding.explanation}</p>
-      {finding.suggestedFix && (
-        <details>
-          <summary>Suggested Fix</summary>
-          <pre>
-            <code>{finding.suggestedFix}</code>
-          </pre>
-        </details>
-      )}
-    </li>
+    </FindingCard>
   );
 }
