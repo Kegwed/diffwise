@@ -1,10 +1,11 @@
 import { useState } from "react";
 import type { ModelChoice, PullRequestRef } from "@diffwise/shared";
-import { getPullRequest, listModels, startReview } from "./api.ts";
+import { getPullRequest, listModels, listReviews, startReview } from "./api.ts";
 import { Breadcrumb } from "./Breadcrumb.tsx";
 import { Button } from "./design-system/index.ts";
 import { HeadCommit } from "./HeadCommit.tsx";
 import { firstModel, ModelPicker } from "./ModelPicker.tsx";
+import { ReviewList } from "./ReviewList.tsx";
 import { ReviewView } from "./ReviewView.tsx";
 import { navigate, REPOSITORIES_HREF, repositoryHref, reviewHref } from "./route.ts";
 import { useFollowedReview } from "./useFollowedReview.ts";
@@ -21,11 +22,13 @@ export function PullRequestView({ pullRequest, reviewId }: { pullRequest: PullRe
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string>();
   const followed = useFollowedReview(reviewId);
+  // Listed again when another Review is opened, which a Review just started is, and when the one followed completes.
+  const reviews = useLoaded(() => listReviews(pullRequest), [reviewId, followed.completedWhileFollowed]);
 
   const repository = `${pullRequest.owner}/${pullRequest.repo}`;
   const name = `${repository}#${pullRequest.number}`;
   const modelChoice = chosenModel ?? (modelListings.data && firstModel(modelListings.data));
-  const error = detail.error ?? modelListings.error ?? startError ?? followed.error;
+  const error = detail.error ?? modelListings.error ?? reviews.error ?? startError ?? followed.error;
   // A Review that was asked for and isn't known to be complete (or lost) is taken to be running.
   const reviewing = starting || (reviewId !== undefined && !followed.error && followed.review?.status !== "complete");
 
@@ -75,7 +78,14 @@ export function PullRequestView({ pullRequest, reviewId }: { pullRequest: PullRe
         )}
       </section>
       {error && <p role="alert">{error}</p>}
-      {followed.review && <ReviewView review={followed.review} />}
+      {reviews.data && <ReviewList pullRequest={pullRequest} reviews={reviews.data} openId={reviewId} />}
+      {followed.review && (
+        <ReviewView
+          review={followed.review}
+          outdated={reviews.data?.find((review) => review.id === reviewId)?.outdated}
+          onReviewLatest={reviewing ? undefined : () => start(followed.review!)}
+        />
+      )}
     </>
   );
 }

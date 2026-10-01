@@ -1,7 +1,7 @@
 import { SEVERITIES, type FileOutcome, type Finding, type PendingFile, type Review } from "@diffwise/shared";
 import { DiffView } from "./DiffView.tsx";
 import { HeadCommit } from "./HeadCommit.tsx";
-import { Badge } from "./design-system/index.ts";
+import { Badge, Button } from "./design-system/index.ts";
 
 const OUTCOME_LABELS: Record<FileOutcome["outcome"], string> = {
   reviewed: "Reviewed",
@@ -14,8 +14,16 @@ const PENDING_LABELS: Record<PendingFile["state"], string> = {
   reviewing: "Reviewing",
 };
 
+export interface ReviewViewProps {
+  review: Review;
+  /** Whether the Pull Request's head commit has moved on since the Review ran. */
+  outdated?: boolean;
+  /** Starts a Review of the Pull Request's latest commit with this Review's Model; none while one can't be started. */
+  onReviewLatest?: () => void;
+}
+
 /** A Review as it stands: complete, or still running with some of its files yet to settle. */
-export function ReviewView({ review }: { review: Review }) {
+export function ReviewView({ review, outdated = false, onReviewLatest }: ReviewViewProps) {
   const byFile = Map.groupBy(review.findings.toSorted(bySeverityThenLine), (finding) => finding.file);
   const outcomes = new Map(review.fileOutcomes.map((outcome) => [outcome.file, outcome]));
   const pending = new Map(review.pendingFiles.map(({ file, state }) => [file, state]));
@@ -32,6 +40,15 @@ export function ReviewView({ review }: { review: Review }) {
       <p className="caption">
         {review.model} via {review.modelProvider} at <HeadCommit commit={review.headCommit} />
       </p>
+      {outdated && (
+        <div role="note" className="outdated-notice panel-sunken">
+          <Badge>Outdated</Badge>
+          <p>New commits were pushed to this Pull Request since this Review ran, so its Findings may no longer apply.</p>
+          <Button size="sm" onClick={onReviewLatest} disabled={!onReviewLatest}>
+            Review the latest commit
+          </Button>
+        </div>
+      )}
       {running && (
         <p role="status">
           Reviewing: {review.fileOutcomes.length} of {review.fileOutcomes.length + review.pendingFiles.length} files done.

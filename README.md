@@ -33,6 +33,8 @@ You need Node.js 24+ and [Ollama](https://ollama.com).
 
 6. Pick a Model from the dropdown (it lists the Models each Model Provider offers, grouped by Model Provider) and click **Review**. A Model Provider that can't be reached is shown as unavailable, with the reason. Each changed file is sent to the Model separately, so a Review takes a little while on a local Model. It runs on the backend and the page follows it live: each file shows as queued, then reviewing, and its Findings appear as soon as it finishes. The page's address names the Review, so you can close the page and reopen it later to pick the Review up where it stands (a Review still running when the backend restarts is lost). The Findings are grouped by file, along with each file's File Outcome: reviewed, skipped (lockfiles, minified assets, build output, binaries and very large diffs are never sent to the Model) or failed (the Model's reply was invalid or the call errored or timed out, twice). A Review with any skipped or failed file is flagged as having incomplete coverage.
 
+7. Reviews are kept: the Pull Request's detail view lists them, newest first, with each one's Model, head commit, date and Finding counts. Click one to open it. To compare Models, review the same commit with each and open their Reviews one after another. Once new commits are pushed to the Pull Request, the Reviews of the earlier commits are marked **Outdated**; open one and click **Review the latest commit** to review the new head commit with the same Model.
+
 ### Connecting to GitHub
 
 Diffwise reads Pull Requests through its own GitHub App, which you create once on your GitHub account:

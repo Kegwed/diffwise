@@ -10,6 +10,7 @@ import type {
   RepositoryRef,
   Review,
   ReviewEvent,
+  ReviewSummary,
   StartReviewRequest,
 } from "@diffwise/shared";
 
@@ -37,6 +38,11 @@ export function listOpenPullRequests(repository: RepositoryRef): Promise<PullReq
 
 export function getPullRequest(pullRequest: PullRequestRef): Promise<PullRequestDetail> {
   return request(`${repositoryPath(pullRequest)}/pull-requests/${pullRequest.number}`);
+}
+
+/** The Pull Request's Reviews, newest first, each saying whether it's Outdated now. */
+export function listReviews(pullRequest: PullRequestRef): Promise<ReviewSummary[]> {
+  return request(`${repositoryPath(pullRequest)}/pull-requests/${pullRequest.number}/reviews`);
 }
 
 export function getGitHubApp(): Promise<GitHubAppStatus> {

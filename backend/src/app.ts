@@ -3,17 +3,20 @@ import { streamSSE } from "hono/streaming";
 import { randomUUID } from "node:crypto";
 import type {
   ApiError,
+  FindingKind,
   GitHubAppStatus,
   ModelProviderListing,
   PullRequestDetail,
+  PullRequestRef,
   PullRequestSummary,
   RepositoryListing,
   RepositoryRef,
   Review,
   ReviewEvent,
+  ReviewSummary,
   StartReviewRequest,
 } from "@diffwise/shared";
-import { getReview, saveReview, type Database } from "./db.ts";
+import { getReview, listReviewSummaries, saveReview, type Database } from "./db.ts";
 import { ForgeAccessError, type Forge, type PullRequestSnapshot } from "./forge.ts";
 import {
   appManifest,
@@ -125,11 +128,27 @@ export function createApp({
   });
 
   app.get("/api/repositories/:owner/:repo/pull-requests/:number", async (c) => {
-    const { owner, repo, number } = c.req.param();
-    // No Pull Request has a number that isn't a positive integer, so the Forge isn't asked.
-    const pullRequest = /^[1-9]\d*$/.test(number) ? await forge.getPullRequest({ owner, repo, number: Number(number) }) : undefined;
-    if (!pullRequest) return c.json<ApiError>({ error: pullRequestNotFound({ owner, repo, number }) }, 404);
+    const pullRequest = await pullRequestAt(c.req.param());
+    if (!pullRequest) return c.json<ApiError>({ error: pullRequestNotFound(c.req.param()) }, 404);
     return c.json<PullRequestDetail>(detail(pullRequest));
+  });
+
+  /** The Pull Request a path names, if there is one. */
+  async function pullRequestAt({ owner, repo, number }: RepositoryRef & { number: string }): Promise<PullRequestSnapshot | undefined> {
+    // No Pull Request has a number that isn't a positive integer, so the Forge isn't asked.
+    return /^[1-9]\d*$/.test(number) ? forge.getPullRequest({ owner, repo, number: Number(number) }) : undefined;
+  }
+
+  app.get("/api/repositories/:owner/:repo/pull-requests/:number/reviews", async (c) => {
+    const pullRequest = await pullRequestAt(c.req.param());
+    if (!pullRequest) return c.json<ApiError>({ error: pullRequestNotFound(c.req.param()) }, 404);
+    const unsaved = [...running.values()]
+      .map((run) => run.current())
+      .filter((review) => isSamePullRequest(review.pullRequest, pullRequest))
+      .map(summary);
+    const reviews = [...unsaved, ...listReviewSummaries(db, pullRequest)].sort(newestFirst);
+    // Outdated is worked out against the head commit as it is now, so it's never saved.
+    return c.json<ReviewSummary[]>(reviews.map((review) => ({ ...review, outdated: review.headCommit !== pullRequest.headCommit })));
   });
 
   app.post("/api/reviews", async (c) => {
@@ -202,6 +221,28 @@ export function createApp({
 
 function detail({ owner, repo, number, title, author, headCommit, files }: PullRequestSnapshot): PullRequestDetail {
   return { owner, repo, number, title, author, headCommit, changedFiles: files.map((file) => file.path) };
+}
+
+function isSamePullRequest(a: PullRequestRef, b: PullRequestRef): boolean {
+  return a.owner === b.owner && a.repo === b.repo && a.number === b.number;
+}
+
+/** A Review that isn't saved (it's still running, mostly), as a list of Reviews shows it. */
+function summary({ id, modelProvider, model, headCommit, createdAt, status, findings }: Review): Omit<ReviewSummary, "outdated"> {
+  const count = (kind: FindingKind) => findings.filter((finding) => finding.kind === kind).length;
+  return {
+    id,
+    modelProvider,
+    model,
+    headCommit,
+    createdAt,
+    status,
+    findingCounts: { "bad-practice": count("bad-practice"), "security-issue": count("security-issue") },
+  };
+}
+
+function newestFirst(a: { createdAt: string }, b: { createdAt: string }): number {
+  return b.createdAt.localeCompare(a.createdAt);
 }
 
 function reviewNotFound(id: string): string {

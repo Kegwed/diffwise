@@ -9,6 +9,7 @@ import type {
   PullRequestSummary,
   Review,
   ReviewEvent,
+  ReviewSummary,
 } from "@diffwise/shared";
 import { App } from "../src/App.tsx";
 
@@ -157,10 +158,11 @@ class FakeProgressStream {
 }
 
 /**
- * Stubs the progress stream the page follows a Review on. With `script`, it sends those events as soon as it's
- * followed; without, the test sends them on the stream `followed()` resolves with.
+ * Stubs the progress stream the page follows a Review on. With `script`, it sends those events (or the ones `script`
+ * gives for the stream's URL) as soon as it's followed; without, the test sends them on the stream `followed()`
+ * resolves with.
  */
-function stubProgressStream(script?: ReviewEvent[]) {
+function stubProgressStream(script?: ReviewEvent[] | ((url: string) => ReviewEvent[])) {
   const streams: FakeProgressStream[] = [];
   vi.stubGlobal(
     "EventSource",
@@ -168,7 +170,7 @@ function stubProgressStream(script?: ReviewEvent[]) {
       constructor(url: string) {
         super(url);
         streams.push(this);
-        if (script) queueMicrotask(() => this.deliver(script));
+        if (script) queueMicrotask(() => this.deliver(typeof script === "function" ? script(url) : script));
       }
     },
   );
@@ -198,6 +200,7 @@ function stubApi(
     }
     if (url === "/api/repositories/acme/shop/pull-requests") return Response.json([pullRequest]);
     if (url === "/api/repositories/acme/shop/pull-requests/7") return Response.json(pullRequestDetail);
+    if (url === "/api/repositories/acme/shop/pull-requests/7/reviews") return Response.json([]);
     if (url === "/api/models") return Response.json(models);
     if (url === "/api/reviews" && init?.method === "POST") return Response.json(startedReview, { status: 201 });
     return Response.json({ error: "not found" }, { status: 404 });
@@ -597,6 +600,161 @@ describe("live progress while a Review runs", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent(error);
     await waitFor(() => expect(screen.getByRole("button", { name: "Review" })).toBeEnabled());
+  });
+});
+
+describe("a Pull Request's Reviews", () => {
+  const REVIEWS = "/api/repositories/acme/shop/pull-requests/7/reviews";
+  const llama: ReviewSummary = {
+    id: "review-1",
+    modelProvider: "Ollama",
+    model: "llama3.1:8b",
+    headCommit: "abc1234def",
+    createdAt: "2026-09-27T10:00:00.000Z",
+    status: "complete",
+    findingCounts: { "bad-practice": 2, "security-issue": 1 },
+    outdated: false,
+  };
+  const gpt: ReviewSummary = {
+    ...llama,
+    id: "review-2",
+    modelProvider: "OpenAI-compatible",
+    model: "gpt-4o",
+    createdAt: "2026-09-27T11:30:00.000Z",
+    findingCounts: { "bad-practice": 0, "security-issue": 0 },
+  };
+
+  /** The row of the Pull Request's list of Reviews that leads to the Review by `model`. */
+  function reviewRow(model: RegExp) {
+    const reviews = screen.getByRole("list", { name: "Reviews" });
+    return within(reviews).getByRole("link", { name: model }).closest("li")!;
+  }
+
+  test("the detail view lists the Pull Request's Reviews with their Model, head commit, date and Finding counts", async () => {
+    stubApi(review, modelListing, { [REVIEWS]: () => Response.json([gpt, llama]) });
+    await openPullRequest();
+
+    const reviews = await screen.findByRole("list", { name: "Reviews" });
+    expect(within(reviews).getAllByRole("link").map((link) => link.textContent)).toEqual([
+      "gpt-4o via OpenAI-compatible",
+      "llama3.1:8b via Ollama",
+    ]);
+    const row = reviewRow(/llama3\.1:8b/);
+    expect(row).toHaveTextContent("at abc1234");
+    expect(within(row).getByRole("time")).toHaveAttribute("datetime", "2026-09-27T10:00:00.000Z");
+    expect(row).toHaveTextContent("1 Security Issue, 2 Bad Practices");
+    expect(reviewRow(/gpt-4o/)).toHaveTextContent("No Findings");
+  });
+
+  test("a Pull Request with no Reviews says so", async () => {
+    stubApi();
+    await openPullRequest();
+
+    expect(await screen.findByText("This Pull Request has no Reviews yet.")).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Reviews" })).not.toBeInTheDocument();
+  });
+
+  test("two Reviews of the same commit by different Models can be opened one after another from the list", async () => {
+    const byGpt: Review = { ...review, id: "review-2", modelProvider: "OpenAI-compatible", model: "gpt-4o", findings: [review.findings[0]!] };
+    stubApi(review, modelListing, { [REVIEWS]: () => Response.json([gpt, llama]) });
+    stubProgressStream((url) => [
+      { type: "review", review: url === "/api/reviews/review-2/events" ? byGpt : review },
+      { type: "complete" },
+    ]);
+    await openPullRequest();
+
+    await userEvent.click(await screen.findByRole("link", { name: "llama3.1:8b via Ollama" }));
+
+    expect(await screen.findByRole("region", { name: /review of acme\/shop#7/i })).toHaveTextContent(/llama3\.1:8b via Ollama at abc1234/);
+    expect(findingTitles(screen.getByRole("region", { name: "src/users.ts" }))).toEqual(["SQL injection", "Swallowed error"]);
+    expect(screen.getByRole("link", { name: "llama3.1:8b via Ollama" })).toHaveAttribute("aria-current", "true");
+    expect(screen.getByRole("link", { name: "gpt-4o via OpenAI-compatible" })).not.toHaveAttribute("aria-current");
+
+    await userEvent.click(screen.getByRole("link", { name: "gpt-4o via OpenAI-compatible" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("region", { name: /review of acme\/shop#7/i })).toHaveTextContent(/gpt-4o via OpenAI-compatible at abc1234/),
+    );
+    expect(findingTitles(screen.getByRole("region", { name: "src/users.ts" }))).toEqual(["SQL injection"]);
+    expect(screen.getByRole("link", { name: "gpt-4o via OpenAI-compatible" })).toHaveAttribute("aria-current", "true");
+    expect(window.location.hash).toBe("#/acme/shop/pull/7/reviews/review-2");
+  });
+
+  test("a Review that's started joins the list as running, and shows its Finding counts once it completes", async () => {
+    const running: ReviewSummary = { ...llama, status: "running", findingCounts: { "bad-practice": 0, "security-issue": 0 } };
+    let listed: ReviewSummary[] = [];
+    stubApi(review, modelListing, { [REVIEWS]: () => Response.json(listed) });
+    const progress = stubProgressStream();
+    await openPullRequest();
+    await screen.findByText("This Pull Request has no Reviews yet.");
+
+    listed = [running];
+    await userEvent.click(await screen.findByRole("button", { name: "Review" }));
+    const stream = await progress.followed();
+    stream.send({ type: "review", review: { ...review, status: "running" } });
+
+    await waitFor(() => expect(within(reviewRow(/llama3\.1:8b/)).getByText("Running")).toHaveClass("dw-badge-outline"));
+
+    listed = [llama];
+    stream.send({ type: "complete" });
+
+    await waitFor(() => expect(reviewRow(/llama3\.1:8b/)).toHaveTextContent("1 Security Issue, 2 Bad Practices"));
+    expect(within(reviewRow(/llama3\.1:8b/)).queryByText("Running")).not.toBeInTheDocument();
+  });
+
+  describe("when new commits were pushed since a Review ran", () => {
+    const oldCommit = "0ld5678fed";
+    const outdatedGpt: ReviewSummary = { ...gpt, headCommit: oldCommit, outdated: true };
+    const byGpt: Review = { ...review, id: "review-2", headCommit: oldCommit, modelProvider: "OpenAI-compatible", model: "gpt-4o" };
+
+    test("the Review is badged Outdated in the list and when opened, and the others aren't", async () => {
+      stubApi(review, modelListing, { [REVIEWS]: () => Response.json([llama, outdatedGpt]) });
+      stubProgressStream([{ type: "review", review: byGpt }, { type: "complete" }]);
+      window.location.hash = "#/acme/shop/pull/7/reviews/review-2";
+      render(<App />);
+
+      const opened = await screen.findByRole("region", { name: /review of acme\/shop#7/i });
+      await waitFor(() => expect(within(opened).getByText("Outdated")).toHaveClass("dw-badge-neutral"));
+      expect(opened).toHaveTextContent(/new commits were pushed/i);
+      expect(within(reviewRow(/gpt-4o/)).getByText("Outdated")).toHaveClass("dw-badge-neutral");
+      expect(within(reviewRow(/llama3\.1:8b/)).queryByText("Outdated")).not.toBeInTheDocument();
+    });
+
+    test("a Review that isn't Outdated has no badge, and no button to review the latest commit", async () => {
+      stubApi(review, modelListing, { [REVIEWS]: () => Response.json([llama, outdatedGpt]) });
+      window.location.hash = "#/acme/shop/pull/7/reviews/review-1";
+      render(<App />);
+
+      const opened = await screen.findByRole("region", { name: /review of acme\/shop#7/i });
+      await screen.findByRole("list", { name: "Reviews" });
+      expect(within(opened).queryByText("Outdated")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Review the latest commit" })).not.toBeInTheDocument();
+    });
+
+    test("one click on the Outdated Review starts a Review of the latest commit with the same Model", async () => {
+      const fresh: Review = { ...byGpt, id: "review-3", headCommit: pullRequest.headCommit };
+      const fetch = stubApi(fresh, modelListing, { [REVIEWS]: () => Response.json([llama, outdatedGpt]) });
+      stubProgressStream((url) => [
+        { type: "review", review: url === "/api/reviews/review-3/events" ? fresh : byGpt },
+        { type: "complete" },
+      ]);
+      window.location.hash = "#/acme/shop/pull/7/reviews/review-2";
+      render(<App />);
+
+      await userEvent.click(await screen.findByRole("button", { name: "Review the latest commit" }));
+
+      expect(fetch).toHaveBeenCalledWith(
+        "/api/reviews",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ pullRequest: { owner: "acme", repo: "shop", number: 7 }, modelProvider: "OpenAI-compatible", model: "gpt-4o" }),
+        }),
+      );
+      await waitFor(() => expect(window.location.hash).toBe("#/acme/shop/pull/7/reviews/review-3"));
+      await waitFor(() =>
+        expect(screen.getByRole("region", { name: /review of acme\/shop#7/i })).toHaveTextContent(/gpt-4o via OpenAI-compatible at abc1234/),
+      );
+    });
   });
 });
 

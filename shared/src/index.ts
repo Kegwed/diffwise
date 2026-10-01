@@ -89,6 +89,19 @@ export interface Review extends ModelChoice {
   findings: Finding[];
 }
 
+/** A Review as its Pull Request's list of Reviews shows it. */
+export interface ReviewSummary extends ModelChoice {
+  id: string;
+  headCommit: string;
+  /** When the Review was started. */
+  createdAt: string;
+  status: Review["status"];
+  /** How many Findings of each kind it reports; so far, while it's running. */
+  findingCounts: Record<FindingKind, number>;
+  /** Whether the Pull Request's head commit is no longer the Review's. Worked out when the Reviews are listed, never saved. */
+  outdated: boolean;
+}
+
 export interface StartReviewRequest extends ModelChoice {
   pullRequest: PullRequestRef;
 }

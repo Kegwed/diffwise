@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { OLLAMA } from "./model-provider-config.ts";
-import type { FileOutcome, Finding, FindingKind, Review, Severity } from "@diffwise/shared";
+import type { FileOutcome, Finding, FindingKind, PullRequestRef, Review, ReviewSummary, Severity } from "@diffwise/shared";
 
 export type Database = DatabaseSync;
 
@@ -149,6 +149,28 @@ export function getReview(db: Database, id: string): Review | undefined {
     pendingFiles: [],
     findings: findingRows.map(toFinding),
   };
+}
+
+/** The Pull Request's saved Reviews, newest first. Whether each is Outdated isn't saved, so it's left to the caller. */
+export function listReviewSummaries(db: Database, { owner, repo, number }: PullRequestRef): Omit<ReviewSummary, "outdated">[] {
+  const rows = db
+    .prepare(
+      `SELECT reviews.*,
+         (SELECT COUNT(*) FROM findings WHERE review_id = reviews.id AND kind = 'bad-practice') AS bad_practices,
+         (SELECT COUNT(*) FROM findings WHERE review_id = reviews.id AND kind = 'security-issue') AS security_issues
+       FROM reviews WHERE owner = ? AND repo = ? AND number = ? ORDER BY created_at DESC, rowid DESC`,
+    )
+    .all(owner, repo, number) as unknown as (ReviewRow & { bad_practices: number; security_issues: number })[];
+  return rows.map((row) => ({
+    id: row.id,
+    modelProvider: row.model_provider,
+    model: row.model,
+    headCommit: row.head_commit,
+    createdAt: row.created_at,
+    // Only complete Reviews are saved.
+    status: "complete",
+    findingCounts: { "bad-practice": row.bad_practices, "security-issue": row.security_issues },
+  }));
 }
 
 function toFileOutcome(row: FileOutcomeRow): FileOutcome {

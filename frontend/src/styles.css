@@ -87,6 +87,18 @@ a {
   font-weight: 600;
 }
 
+.row-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* The Review being shown, in its Pull Request's list of Reviews. */
+.rows li:has([aria-current]) {
+  background: var(--accent-soft);
+}
+
 .breadcrumb {
   display: flex;
   flex-wrap: wrap;
@@ -174,6 +186,20 @@ a {
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-lg);
   background: var(--surface-sunken);
+}
+
+.outdated-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin: var(--space-4) 0;
+}
+
+.outdated-notice p {
+  flex: 1;
+  min-width: 16ch;
+  margin: 0;
 }
 
 .file {
