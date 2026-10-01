@@ -25,15 +25,20 @@ export function DiffView({ file, patch, findings, jump }: DiffViewProps) {
   const jumpedTo = jump && findings.includes(jump.to) ? jump.to : undefined;
   const firstJumpedLine = jumpedTo && lines.find((line) => covers(jumpedTo, line));
   const firstJumpedRow = useRef<HTMLTableRowElement>(null);
-  const jumpedCard = useRef<HTMLDivElement>(null);
+  const jumpedFrame = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    (firstJumpedRow.current ?? jumpedCard.current)?.scrollIntoView({ block: "center" });
+    (firstJumpedRow.current ?? jumpedFrame.current)?.scrollIntoView({ block: "center" });
   }, [jump]);
 
-  const card = (finding: Finding, key: number, className?: string) => (
-    <div key={key} ref={finding === jumpedTo ? jumpedCard : undefined} className={className}>
-      <FindingItem finding={finding} jumpedTo={finding === jumpedTo} />
+  /** The Finding in the frame the page scrolls to, and marks, when the Finding is the one jumped to. */
+  const framedFinding = (finding: Finding, key: number, className?: string) => (
+    <div
+      key={key}
+      ref={finding === jumpedTo ? jumpedFrame : undefined}
+      className={cx("finding-frame", finding === jumpedTo && "finding-jumped-to", className)}
+    >
+      <FindingItem finding={finding} />
     </div>
   );
 
@@ -63,7 +68,7 @@ export function DiffView({ file, patch, findings, jump }: DiffViewProps) {
                       </tr>
                       {beneath.get(line)?.map((finding, f) => (
                         <tr key={f} className="diff-finding">
-                          <td colSpan={3}>{card(finding, f, "diff-finding-card")}</td>
+                          <td colSpan={3}>{framedFinding(finding, f, "diff-finding-card")}</td>
                         </tr>
                       ))}
                     </Fragment>
@@ -79,7 +84,7 @@ export function DiffView({ file, patch, findings, jump }: DiffViewProps) {
         )
       )}
       {hunks.length > 0 && elsewhere.length > 0 && <p className="caption">On lines this diff doesn't show:</p>}
-      {elsewhere.map((finding, i) => card(finding, i))}
+      {elsewhere.map((finding, i) => framedFinding(finding, i))}
     </>
   );
 }
@@ -101,10 +106,9 @@ function placeFindings(lines: DiffLine[], findings: Finding[]) {
   return { beneath, elsewhere };
 }
 
-function FindingItem({ finding, jumpedTo }: { finding: Finding; jumpedTo: boolean }) {
+function FindingItem({ finding }: { finding: Finding }) {
   return (
     <FindingCard
-      className={jumpedTo ? "finding-jumped-to" : undefined}
       kind={finding.kind}
       severity={finding.severity}
       file={finding.file}

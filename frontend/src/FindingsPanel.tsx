@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { SEVERITIES, type Finding } from "@diffwise/shared";
-import { Badge, Severity } from "./design-system/index.ts";
+import { Badge, Button, Severity } from "./design-system/index.ts";
 import { KINDS_BY_PRIORITY, kindLabel, lineRange, matchesFilter, type FindingFilter } from "./findings.ts";
 
 /** Highest first, as the design system sorts by Severity. */
@@ -11,7 +11,8 @@ export interface FindingsPanelProps {
   findings: Finding[];
   /** The filter the diff applies too. */
   filter: FindingFilter;
-  onFilter: (filter: FindingFilter) => void;
+  /** Changes the filter from what it is by then, so toggles in quick succession each count. */
+  onFilter: (change: (filter: FindingFilter) => FindingFilter) => void;
   /** The Finding the diff was last jumped to, if any. */
   jumpedTo?: Finding;
   onJump: (finding: Finding) => void;
@@ -34,7 +35,7 @@ export function FindingsPanel({ findings, filter, onFilter, jumpedTo, onJump }: 
               key={kind}
               count={count}
               pressed={filter.kinds.has(kind)}
-              onToggle={() => onFilter({ ...filter, kinds: toggled(filter.kinds, kind) })}
+              onToggle={() => onFilter((was) => ({ ...was, kinds: toggled(was.kinds, kind) }))}
             >
               {kindLabel(kind, count)}
             </FilterButton>
@@ -47,7 +48,7 @@ export function FindingsPanel({ findings, filter, onFilter, jumpedTo, onJump }: 
             key={severity}
             count={findings.filter((finding) => finding.severity === severity).length}
             pressed={filter.severities.has(severity)}
-            onToggle={() => onFilter({ ...filter, severities: toggled(filter.severities, severity) })}
+            onToggle={() => onFilter((was) => ({ ...was, severities: toggled(was.severities, severity) }))}
           >
             <Severity severity={severity} />
           </FilterButton>
@@ -66,8 +67,10 @@ export function FindingsPanel({ findings, filter, onFilter, jumpedTo, onJump }: 
                 onClick={() => onJump(finding)}
               >
                 <Severity severity={finding.severity} /> <span className="finding-link-title">{finding.title}</span>{" "}
-                <span className="finding-link-loc">
-                  {finding.file}:{lineRange(finding)}
+                <span className="caption">
+                  <code>
+                    {finding.file}:{lineRange(finding)}
+                  </code>
                 </span>
               </button>
             </li>
@@ -91,9 +94,9 @@ function FilterButton({
   children: ReactNode;
 }) {
   return (
-    <button type="button" className="filter-chip" aria-pressed={pressed} onClick={onToggle}>
+    <Button size="sm" className="filter-button" aria-pressed={pressed} onClick={onToggle}>
       {children} <Badge tone={pressed ? "accent" : "outline"}>{count}</Badge>
-    </button>
+    </Button>
   );
 }
 

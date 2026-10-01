@@ -204,7 +204,7 @@ a {
 
 /* A Review's files, with the Findings panel beside them once the page is wide enough for both. */
 
-main:has(.review-layout) {
+main:has(.findings-panel) {
   max-width: 1280px;
 }
 
@@ -241,10 +241,11 @@ main:has(.review-layout) {
 
 .findings-panel h3 {
   margin: 0 0 var(--space-3);
-  font: var(--type-label);
+  font: var(--type-heading);
+  letter-spacing: var(--type-heading-letter-spacing);
 }
 
-.findings-panel .caption {
+.findings-panel > .caption {
   margin-top: var(--space-4);
 }
 
@@ -255,31 +256,17 @@ main:has(.review-layout) {
   margin-bottom: var(--space-2);
 }
 
-.filter-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  height: 28px;
+/* A count's Badge and a Severity bring their own insets. */
+.filter-button {
   padding: 0 var(--space-1) 0 var(--space-2);
-  font: var(--type-label);
-  color: var(--ink);
-  background: var(--surface);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-md);
-  cursor: pointer;
 }
 
-/* A Severity brings its own inset. */
-.filter-chip:has(.dw-sev) {
+.filter-button:has(.dw-sev) {
   padding-left: 2px;
 }
 
-.filter-chip:hover {
-  background: var(--surface-sunken);
-}
-
 /* The active filter is the selection, so it takes the accent. */
-.filter-chip[aria-pressed="true"] {
+.filter-button[aria-pressed="true"] {
   background: var(--accent-soft);
   border-color: var(--accent);
   color: var(--accent);
@@ -322,12 +309,8 @@ main:has(.review-layout) {
   font: var(--type-label);
 }
 
-.finding-link-loc {
+.finding-link .caption {
   display: block;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 16px;
-  color: var(--ink-muted);
   overflow-wrap: anywhere;
 }
 
@@ -426,15 +409,14 @@ main:has(.review-layout) {
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
-.dw-finding.finding-jumped-to {
-  border-color: var(--accent);
+/* As wide as the Finding it frames, so the mark of the one jumped to hugs it. */
+.finding-frame {
+  max-width: 720px;
+  border-radius: var(--radius-lg);
 }
 
-/* A jump glides to its lines, unless the reader asked for less motion. */
-@media (prefers-reduced-motion: no-preference) {
-  html {
-    scroll-behavior: smooth;
-  }
+.finding-jumped-to {
+  box-shadow: 0 0 0 2px var(--accent);
 }
 
 .diff-finding td {
