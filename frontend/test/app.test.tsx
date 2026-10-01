@@ -127,7 +127,9 @@ function stubApi(
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
     if (routes[url]) return routes[url]();
     if (url === "/api/github-app") return Response.json(createdGitHubApp);
-    if (url === "/api/repositories") return Response.json([{ owner: "acme", repo: "shop" }, { owner: "acme", repo: "docs" }]);
+    if (url === "/api/repositories") {
+      return Response.json({ repositories: [{ owner: "acme", repo: "shop" }, { owner: "acme", repo: "docs" }] });
+    }
     if (url === "/api/repositories/acme/shop/pull-requests") return Response.json([pullRequest]);
     if (url === "/api/repositories/acme/shop/pull-requests/7") return Response.json(pullRequestDetail);
     if (url === "/api/models") return Response.json(models);
@@ -160,6 +162,17 @@ describe("browsing to a Pull Request", () => {
 
     expect(await screen.findByRole("link", { name: "acme/shop" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "acme/docs" })).toBeInTheDocument();
+  });
+
+  test("when some repositories couldn't be listed, the page lists the rest and says why", async () => {
+    const unlisted = "GitHub replied 401 when listing the GitHub App's installations: Bad credentials";
+    stubApi(review, modelListing, {
+      "/api/repositories": () => Response.json({ repositories: [{ owner: "diffwise-fixtures", repo: "bookshop" }], unlisted }),
+    });
+    render(<App />);
+
+    expect(await screen.findByRole("link", { name: "diffwise-fixtures/bookshop" })).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(unlisted);
   });
 
   test("selecting a repository lists its open Pull Requests", async () => {

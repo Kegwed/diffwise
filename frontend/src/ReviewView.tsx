@@ -1,5 +1,6 @@
 import { SEVERITIES, type FileOutcome, type Finding, type Review } from "@diffwise/shared";
 import { DiffView } from "./DiffView.tsx";
+import { HeadCommit } from "./HeadCommit.tsx";
 import { Badge } from "./design-system/index.ts";
 
 const OUTCOME_LABELS: Record<FileOutcome["outcome"], string> = {
@@ -21,7 +22,7 @@ export function ReviewView({ review }: { review: Review }) {
         Review of {owner}/{repo}#{number}
       </h2>
       <p className="caption">
-        {review.model} via {review.modelProvider} at <code title={review.headCommit}>{review.headCommit.slice(0, 7)}</code>
+        {review.model} via {review.modelProvider} at <HeadCommit commit={review.headCommit} />
       </p>
       <CoverageNotice fileOutcomes={review.fileOutcomes} />
       {byFile.size === 0 && <p>No Findings.</p>}

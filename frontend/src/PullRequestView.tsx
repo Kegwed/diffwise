@@ -3,30 +3,32 @@ import type { ModelChoice, PullRequestRef, Review } from "@diffwise/shared";
 import { getPullRequest, listModels, startReview } from "./api.ts";
 import { Breadcrumb } from "./Breadcrumb.tsx";
 import { Button } from "./design-system/index.ts";
+import { HeadCommit } from "./HeadCommit.tsx";
 import { firstModel, ModelPicker } from "./ModelPicker.tsx";
 import { ReviewView } from "./ReviewView.tsx";
 import { REPOSITORIES_HREF, repositoryHref } from "./route.ts";
 import { useLoaded } from "./useLoaded.ts";
 
 /** A Pull Request's detail view: what's about to be reviewed, the Model to review it with, and then its Review. */
-export function PullRequest({ pullRequest: ref }: { pullRequest: PullRequestRef }) {
-  const pullRequest = useLoaded(() => getPullRequest(ref));
+export function PullRequestView({ pullRequest }: { pullRequest: PullRequestRef }) {
+  const detail = useLoaded(() => getPullRequest(pullRequest));
   const modelListings = useLoaded(listModels);
   const [chosenModel, setChosenModel] = useState<ModelChoice>();
   const [reviewing, setReviewing] = useState(false);
   const [review, setReview] = useState<Review>();
   const [reviewError, setReviewError] = useState<string>();
 
-  const name = `${ref.owner}/${ref.repo}#${ref.number}`;
+  const repository = `${pullRequest.owner}/${pullRequest.repo}`;
+  const name = `${repository}#${pullRequest.number}`;
   const modelChoice = chosenModel ?? (modelListings.data && firstModel(modelListings.data));
-  const error = pullRequest.error ?? modelListings.error ?? reviewError;
+  const error = detail.error ?? modelListings.error ?? reviewError;
 
   async function runReview(modelChoice: ModelChoice) {
     setReviewing(true);
     setReview(undefined);
     setReviewError(undefined);
     try {
-      setReview(await startReview(ref, modelChoice));
+      setReview(await startReview(pullRequest, modelChoice));
     } catch (e) {
       setReviewError((e as Error).message);
     } finally {
@@ -40,21 +42,20 @@ export function PullRequest({ pullRequest: ref }: { pullRequest: PullRequestRef 
         <Breadcrumb
           above={[
             { label: "Repositories", href: REPOSITORIES_HREF },
-            { label: `${ref.owner}/${ref.repo}`, href: repositoryHref(ref) },
+            { label: repository, href: repositoryHref(pullRequest) },
           ]}
-          current={`#${ref.number}`}
+          current={`#${pullRequest.number}`}
         />
-        <h2 id="pull-request">{pullRequest.data?.title ?? name}</h2>
-        {!pullRequest.data && !pullRequest.error && <p>Loading…</p>}
-        {pullRequest.data && (
+        <h2 id="pull-request">{detail.data?.title ?? name}</h2>
+        {!detail.data && !detail.error && <p>Loading…</p>}
+        {detail.data && (
           <>
             <p className="caption">
-              {name} by {pullRequest.data.author} at{" "}
-              <code title={pullRequest.data.headCommit}>{pullRequest.data.headCommit.slice(0, 7)}</code>
+              {name} by {detail.data.author} at <HeadCommit commit={detail.data.headCommit} />
             </p>
-            <h3 id="changed-files" className="changed-files-heading">Changed files ({pullRequest.data.changedFiles.length})</h3>
+            <h3 id="changed-files" className="changed-files-heading">Changed files ({detail.data.changedFiles.length})</h3>
             <ul aria-labelledby="changed-files" className="changed-files panel-sunken">
-              {pullRequest.data.changedFiles.map((file) => (
+              {detail.data.changedFiles.map((file) => (
                 <li key={file}>
                   <code>{file}</code>
                 </li>

@@ -5,6 +5,13 @@ export interface RepositoryRef {
   repo: string;
 }
 
+/** The repositories Diffwise can read Pull Requests from. */
+export interface RepositoryListing {
+  repositories: RepositoryRef[];
+  /** Why some repositories are missing from the listing, when they couldn't be listed (e.g. GitHub can't be reached). */
+  unlisted?: string;
+}
+
 export interface PullRequestRef extends RepositoryRef {
   number: number;
 }

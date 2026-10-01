@@ -1,4 +1,4 @@
-import type { PullRequestRef, PullRequestSummary, RepositoryRef } from "@diffwise/shared";
+import type { PullRequestRef, PullRequestSummary, RepositoryListing, RepositoryRef } from "@diffwise/shared";
 
 export interface ChangedFile {
   path: string;
@@ -14,8 +14,7 @@ export interface PullRequestSnapshot extends PullRequestSummary {
 
 /** Where Pull Requests come from (GitHub, or fixtures). */
 export interface Forge {
-  /** The repositories Diffwise can read Pull Requests from. */
-  listRepositories(): Promise<RepositoryRef[]>;
+  listRepositories(): Promise<RepositoryListing>;
   /** A repository's open Pull Requests; throws a ForgeAccessError if Diffwise can't read the repo. */
   listOpenPullRequests(repository: RepositoryRef): Promise<PullRequestSummary[]>;
   /** Undefined if there's no such Pull Request; throws a ForgeAccessError if Diffwise can't read its repo. */

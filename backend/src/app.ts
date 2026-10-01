@@ -5,8 +5,8 @@ import type {
   GitHubAppStatus,
   ModelProviderListing,
   PullRequestDetail,
-  PullRequestRef,
   PullRequestSummary,
+  RepositoryListing,
   RepositoryRef,
   Review,
   StartReviewRequest,
@@ -96,7 +96,7 @@ export function createApp({
   });
 
   app.get("/api/repositories", async (c) => {
-    return c.json<RepositoryRef[]>(await forge.listRepositories());
+    return c.json<RepositoryListing>(await forge.listRepositories());
   });
 
   app.get("/api/repositories/:owner/:repo/pull-requests", async (c) => {
@@ -124,7 +124,7 @@ export function createApp({
     const { owner, repo, number } = c.req.param();
     // No Pull Request has a number that isn't a positive integer, so the Forge isn't asked.
     const pullRequest = /^[1-9]\d*$/.test(number) ? await forge.getPullRequest({ owner, repo, number: Number(number) }) : undefined;
-    if (!pullRequest) return c.json<ApiError>({ error: `Pull Request ${owner}/${repo}#${number} not found` }, 404);
+    if (!pullRequest) return c.json<ApiError>({ error: pullRequestNotFound({ owner, repo, number }) }, 404);
     return c.json<PullRequestDetail>(detail(pullRequest));
   });
 
@@ -171,6 +171,7 @@ function detail({ owner, repo, number, title, author, headCommit, files }: PullR
   return { owner, repo, number, title, author, headCommit, changedFiles: files.map((file) => file.path) };
 }
 
-function pullRequestNotFound({ owner, repo, number }: PullRequestRef): string {
+/** `number` as asked for, which in a URL may not be a number at all. */
+function pullRequestNotFound({ owner, repo, number }: RepositoryRef & { number: number | string }): string {
   return `Pull Request ${owner}/${repo}#${number} not found`;
 }

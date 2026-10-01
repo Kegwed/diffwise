@@ -68,7 +68,7 @@ export function githubForge(loadCredentials: () => GitHubAppCredentials | undefi
     async listRepositories() {
       const credentials = loadCredentials();
       // Not connected yet: there's nothing to browse, and the page offers to create the App.
-      if (!credentials) return [];
+      if (!credentials) return { repositories: [] };
       const jwt = appJwt(credentials);
       const installations = await listAll<{ id: number; suspended_at: string | null }>(
         "/app/installations",
@@ -86,7 +86,7 @@ export function githubForge(loadCredentials: () => GitHubAppCredentials | undefi
         );
         repositories.push(...installed.map((repository) => ({ owner: repository.owner.login, repo: repository.name })));
       }
-      return repositories;
+      return { repositories };
     },
 
     async listOpenPullRequests(repository) {

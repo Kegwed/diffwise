@@ -83,7 +83,7 @@ describe("Resolving a Pull Request URL", () => {
   test("any other error reaching the Forge is reported with its message", async () => {
     const app = createApp({
       forge: {
-        listRepositories: async () => [],
+        listRepositories: async () => ({ repositories: [] }),
         listOpenPullRequests: async () => [],
         getPullRequest: async () => {
           throw new Error("GitHub replied 503 when fetching acme/shop#7: unavailable");

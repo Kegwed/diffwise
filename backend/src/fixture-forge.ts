@@ -65,7 +65,7 @@ export function fixtureForge(pullRequests: PullRequestSnapshot[] = FIXTURE_PULL_
   return {
     async listRepositories() {
       const repositories = new Map(pullRequests.map(({ owner, repo }) => [`${owner}/${repo}`, { owner, repo }]));
-      return [...repositories.values()];
+      return { repositories: [...repositories.values()] };
     },
     async listOpenPullRequests(repository) {
       return pullRequests
@@ -85,7 +85,14 @@ export function withFixtures(forge: Forge, pullRequests: PullRequestSnapshot[] =
   const fixtures = fixtureForge(pullRequests);
   return {
     async listRepositories() {
-      return [...(await fixtures.listRepositories()), ...(await forge.listRepositories())];
+      const { repositories } = await fixtures.listRepositories();
+      try {
+        const listing = await forge.listRepositories();
+        return { ...listing, repositories: [...repositories, ...listing.repositories] };
+      } catch (error) {
+        // The fixtures don't need `forge`, so they stay listed when it can't be reached.
+        return { repositories, unlisted: (error as Error).message };
+      }
     },
     async listOpenPullRequests(repository) {
       const fixturePullRequests = await fixtures.listOpenPullRequests(repository);

@@ -1,6 +1,6 @@
-import { PullRequest } from "./PullRequest.tsx";
-import { Repositories } from "./Repositories.tsx";
-import { RepositoryPullRequests } from "./RepositoryPullRequests.tsx";
+import { PullRequestView } from "./PullRequestView.tsx";
+import { RepositoriesView } from "./RepositoriesView.tsx";
+import { RepositoryView } from "./RepositoryView.tsx";
 import { pullRequestHref, repositoryHref, useRoute } from "./route.ts";
 
 export function App() {
@@ -9,10 +9,10 @@ export function App() {
   return (
     <main>
       <h1>Diffwise</h1>
-      {route.view === "repositories" && <Repositories />}
+      {route.view === "repositories" && <RepositoriesView />}
       {/* Keyed, so going from one repository or Pull Request to another starts the view afresh. */}
-      {route.view === "repository" && <RepositoryPullRequests key={repositoryHref(route.repository)} repository={route.repository} />}
-      {route.view === "pull-request" && <PullRequest key={pullRequestHref(route.pullRequest)} pullRequest={route.pullRequest} />}
+      {route.view === "repository" && <RepositoryView key={repositoryHref(route.repository)} repository={route.repository} />}
+      {route.view === "pull-request" && <PullRequestView key={pullRequestHref(route.pullRequest)} pullRequest={route.pullRequest} />}
     </main>
   );
 }

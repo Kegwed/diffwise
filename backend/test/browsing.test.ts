@@ -1,8 +1,9 @@
 import { describe, expect, test } from "vitest";
-import type { ApiError, PullRequestDetail, PullRequestSummary, RepositoryRef } from "@diffwise/shared";
+import type { ApiError, PullRequestDetail, PullRequestSummary, RepositoryListing } from "@diffwise/shared";
 import { createApp } from "../src/app.ts";
 import { openDatabase } from "../src/db.ts";
-import type { PullRequestSnapshot } from "../src/forge.ts";
+import { withFixtures } from "../src/fixture-forge.ts";
+import type { Forge, PullRequestSnapshot } from "../src/forge.ts";
 import { fakeForge, fakeModelProvider } from "./fakes.ts";
 
 const userLookup: PullRequestSnapshot = {
@@ -54,10 +55,12 @@ describe("Browsing repositories", () => {
     const response = await setup().request("/api/repositories");
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual<RepositoryRef[]>([
-      { owner: "acme", repo: "shop" },
-      { owner: "acme", repo: "docs" },
-    ]);
+    expect(await response.json()).toEqual<RepositoryListing>({
+      repositories: [
+        { owner: "acme", repo: "shop" },
+        { owner: "acme", repo: "docs" },
+      ],
+    });
   });
 
   test("lists a repository's open Pull Requests, and no other repository's", async () => {
@@ -116,5 +119,49 @@ describe("A Pull Request's detail", () => {
 
     expect(response.status).toBe(403);
     expect(((await response.json()) as ApiError).error).toMatch(/isn't installed on acme\/shop/);
+  });
+});
+
+describe("Browsing with the fixture Pull Requests alongside GitHub's", () => {
+  function setupWithFixtures(forge: Forge) {
+    return createApp({ forge: withFixtures(forge, [docsTypo]), modelProviders: [], db: openDatabase(":memory:") });
+  }
+
+  test("the fixture repositories are listed before the ones the GitHub App is installed on", async () => {
+    const app = setupWithFixtures(fakeForge([userLookup, checkout]));
+
+    expect(await (await app.request("/api/repositories")).json()).toEqual<RepositoryListing>({
+      repositories: [
+        { owner: "acme", repo: "docs" },
+        { owner: "acme", repo: "shop" },
+      ],
+    });
+  });
+
+  test("each repository lists its own open Pull Requests, fixture or not", async () => {
+    const app = setupWithFixtures(fakeForge([userLookup, checkout]));
+
+    const fixture = (await (await app.request("/api/repositories/acme/docs/pull-requests")).json()) as PullRequestSummary[];
+    const installed = (await (await app.request("/api/repositories/acme/shop/pull-requests")).json()) as PullRequestSummary[];
+
+    expect(fixture.map((pr) => pr.title)).toEqual(["Fix a typo"]);
+    expect(installed.map((pr) => pr.title)).toEqual(["Add user lookup", "Speed up checkout"]);
+  });
+
+  test("when GitHub's repositories can't be listed, the fixture ones still are, with the reason the rest are missing", async () => {
+    const app = setupWithFixtures({
+      ...fakeForge([userLookup]),
+      listRepositories: async () => {
+        throw new Error("GitHub replied 401 when listing the GitHub App's installations: Bad credentials");
+      },
+    });
+
+    const response = await app.request("/api/repositories");
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual<RepositoryListing>({
+      repositories: [{ owner: "acme", repo: "docs" }],
+      unlisted: "GitHub replied 401 when listing the GitHub App's installations: Bad credentials",
+    });
   });
 });

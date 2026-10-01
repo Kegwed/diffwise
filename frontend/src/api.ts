@@ -6,6 +6,7 @@ import type {
   PullRequestDetail,
   PullRequestRef,
   PullRequestSummary,
+  RepositoryListing,
   RepositoryRef,
   Review,
   StartReviewRequest,
@@ -21,8 +22,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
-/** The repositories the GitHub App is installed on. */
-export function listRepositories(): Promise<RepositoryRef[]> {
+export function listRepositories(): Promise<RepositoryListing> {
   return request("/api/repositories");
 }
 

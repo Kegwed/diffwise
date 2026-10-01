@@ -1,11 +1,12 @@
 import type { RepositoryRef } from "@diffwise/shared";
 import { listOpenPullRequests } from "./api.ts";
 import { Breadcrumb } from "./Breadcrumb.tsx";
+import { HeadCommit } from "./HeadCommit.tsx";
 import { pullRequestHref, REPOSITORIES_HREF } from "./route.ts";
 import { useLoaded } from "./useLoaded.ts";
 
 /** A repository's open Pull Requests, each leading to its detail view. */
-export function RepositoryPullRequests({ repository }: { repository: RepositoryRef }) {
+export function RepositoryView({ repository }: { repository: RepositoryRef }) {
   const pullRequests = useLoaded(() => listOpenPullRequests(repository));
   const name = `${repository.owner}/${repository.repo}`;
 
@@ -20,7 +21,7 @@ export function RepositoryPullRequests({ repository }: { repository: RepositoryR
           <li key={pr.number}>
             <a href={pullRequestHref(pr)}>{pr.title}</a>
             <div className="caption">
-              #{pr.number} by {pr.author} at <code title={pr.headCommit}>{pr.headCommit.slice(0, 7)}</code>
+              #{pr.number} by {pr.author} at <HeadCommit commit={pr.headCommit} />
             </div>
           </li>
         ))}

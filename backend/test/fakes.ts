@@ -59,7 +59,8 @@ export function fakeForge(pullRequests: PullRequestSnapshot[], { notInstalledOn 
   }
   return {
     async listRepositories() {
-      return (await forge.listRepositories()).filter(installed);
+      const { repositories } = await forge.listRepositories();
+      return { repositories: repositories.filter(installed) };
     },
     async listOpenPullRequests(repository) {
       requireInstalled(repository);
