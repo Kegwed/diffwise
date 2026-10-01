@@ -5,4 +5,6 @@ import { afterEach, vi } from "vitest";
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  // Each test starts on the first view, whichever one the last test browsed to.
+  window.location.hash = "";
 });

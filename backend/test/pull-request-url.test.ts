@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import type { ApiError, PullRequestSummary } from "@diffwise/shared";
+import type { ApiError, PullRequestRef } from "@diffwise/shared";
 import { createApp } from "../src/app.ts";
 import { openDatabase } from "../src/db.ts";
 import type { PullRequestSnapshot } from "../src/forge.ts";
@@ -41,14 +41,7 @@ describe("Resolving a Pull Request URL", () => {
     const response = await resolve(setup(), url);
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual<PullRequestSummary>({
-      owner: "acme",
-      repo: "shop",
-      number: 7,
-      title: "Add user lookup",
-      author: "octocat",
-      headCommit: "abc1234",
-    });
+    expect(await response.json()).toMatchObject<PullRequestRef>({ owner: "acme", repo: "shop", number: 7 });
   });
 
   test.each([
@@ -90,7 +83,8 @@ describe("Resolving a Pull Request URL", () => {
   test("any other error reaching the Forge is reported with its message", async () => {
     const app = createApp({
       forge: {
-        listPullRequests: async () => [],
+        listRepositories: async () => [],
+        listOpenPullRequests: async () => [],
         getPullRequest: async () => {
           throw new Error("GitHub replied 503 when fetching acme/shop#7: unavailable");
         },

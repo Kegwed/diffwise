@@ -1,3 +1,4 @@
+import type { RepositoryRef } from "@diffwise/shared";
 import type { ChatRequest, ModelProvider } from "../src/model-provider.ts";
 import { fixtureForge } from "../src/fixture-forge.ts";
 import { ForgeAccessError, type Forge, type PullRequestSnapshot } from "../src/forge.ts";
@@ -50,13 +51,22 @@ export interface FakeForgeOptions {
 /** Serves the given Pull Requests like the fixture Forge, except in repos the GitHub App isn't installed on. */
 export function fakeForge(pullRequests: PullRequestSnapshot[], { notInstalledOn = [] }: FakeForgeOptions = {}): Forge {
   const forge = fixtureForge(pullRequests);
+  const installed = ({ owner, repo }: RepositoryRef) => !notInstalledOn.includes(`${owner}/${repo}`);
+  function requireInstalled(repository: RepositoryRef) {
+    if (installed(repository)) return;
+    const { owner, repo } = repository;
+    throw new ForgeAccessError(`The GitHub App isn't installed on ${owner}/${repo}. Install it on that repo, then try again.`);
+  }
   return {
-    listPullRequests: forge.listPullRequests,
+    async listRepositories() {
+      return (await forge.listRepositories()).filter(installed);
+    },
+    async listOpenPullRequests(repository) {
+      requireInstalled(repository);
+      return forge.listOpenPullRequests(repository);
+    },
     async getPullRequest(ref) {
-      const repo = `${ref.owner}/${ref.repo}`;
-      if (notInstalledOn.includes(repo)) {
-        throw new ForgeAccessError(`The GitHub App isn't installed on ${repo}. Install it on that repo, then try again.`);
-      }
+      requireInstalled(ref);
       return forge.getPullRequest(ref);
     },
   };

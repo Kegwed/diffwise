@@ -1,29 +1,43 @@
 import { createSign } from "node:crypto";
-import type { PullRequestRef } from "@diffwise/shared";
-import { ForgeAccessError, type ChangedFile, type Forge } from "./forge.ts";
+import type { PullRequestSummary, RepositoryRef } from "@diffwise/shared";
+import { ForgeAccessError, type Forge } from "./forge.ts";
 import { githubApi, githubJson as json, installUrl, type GitHubAppCredentials } from "./github-app.ts";
 
 /** GitHub lists at most this many changed files for a Pull Request. */
 const MAX_FILES = 3000;
 
+/** A Pull Request as GitHub's API describes it, as far as Diffwise reads it. */
+interface GitHubPull {
+  number: number;
+  title: string;
+  body: string | null;
+  user: { login: string } | null;
+  head: { sha: string };
+  base: { repo: GitHubRepository };
+}
+
+interface GitHubRepository {
+  name: string;
+  owner: { login: string };
+}
+
 /**
- * Reads Pull Requests from GitHub as Diffwise's GitHub App, using an installation token for each repo's installation.
- * Thin on purpose: it only translates GitHub's API, and is checked by hand (see README.md).
+ * Reads repositories and Pull Requests from GitHub as Diffwise's GitHub App, using an installation token for each
+ * repo's installation. Thin on purpose: it only translates GitHub's API, and is checked by hand (see README.md).
  */
 export function githubForge(loadCredentials: () => GitHubAppCredentials | undefined): Forge {
   const installationTokens = new Map<number, { token: string; expiresAt: number }>();
 
-  /** A token for the installation of the App on `ref`'s repo, or a ForgeAccessError saying to install it there. */
-  async function installationToken(credentials: GitHubAppCredentials, { owner, repo }: PullRequestRef): Promise<string> {
-    const jwt = appJwt(credentials);
-    const installationResponse = await githubApi(`${repoPath({ owner, repo })}/installation`, { auth: jwt });
-    if (installationResponse.status === 404) {
-      throw new ForgeAccessError(
-        `The GitHub App ${credentials.name} isn't installed on ${owner}/${repo}, or that repo doesn't exist. ` +
-          `Install it on that repo at ${installUrl(credentials)}, then try again.`,
-      );
+  function requireCredentials(): GitHubAppCredentials {
+    const credentials = loadCredentials();
+    if (!credentials) {
+      throw new ForgeAccessError("Diffwise isn't connected to GitHub yet. Create its GitHub App first, then install it on the repo.");
     }
-    const { id } = await json<{ id: number }>(installationResponse, `looking up the GitHub App's installation on ${owner}/${repo}`);
+    return credentials;
+  }
+
+  /** A token for the installation with this id, authenticating as the App with `jwt` to create one. */
+  async function installationToken(jwt: string, id: number): Promise<string> {
     const cached = installationTokens.get(id);
     // Installation tokens last an hour; renew with a few minutes to spare.
     if (cached && cached.expiresAt - Date.now() > 5 * 60_000) return cached.token;
@@ -35,56 +49,110 @@ export function githubForge(loadCredentials: () => GitHubAppCredentials | undefi
     return token;
   }
 
+  /** A token for the installation of the App on the repo, or a ForgeAccessError saying to install it there. */
+  async function repositoryToken({ owner, repo }: RepositoryRef): Promise<string> {
+    const credentials = requireCredentials();
+    const jwt = appJwt(credentials);
+    const installationResponse = await githubApi(`${repoPath({ owner, repo })}/installation`, { auth: jwt });
+    if (installationResponse.status === 404) {
+      throw new ForgeAccessError(
+        `The GitHub App ${credentials.name} isn't installed on ${owner}/${repo}, or that repo doesn't exist. ` +
+          `Install it on that repo at ${installUrl(credentials)}, then try again.`,
+      );
+    }
+    const { id } = await json<{ id: number }>(installationResponse, `looking up the GitHub App's installation on ${owner}/${repo}`);
+    return installationToken(jwt, id);
+  }
+
   return {
-    // Browsing installed repos' Pull Requests comes later; until then a Pull Request is reached by its URL.
-    async listPullRequests() {
-      return [];
+    async listRepositories() {
+      const credentials = loadCredentials();
+      // Not connected yet: there's nothing to browse, and the page offers to create the App.
+      if (!credentials) return [];
+      const jwt = appJwt(credentials);
+      const installations = await listAll<{ id: number; suspended_at: string | null }>(
+        "/app/installations",
+        jwt,
+        "listing the GitHub App's installations",
+      );
+      const repositories: RepositoryRef[] = [];
+      // A suspended installation can't be given a token.
+      for (const { id } of installations.filter((installation) => !installation.suspended_at)) {
+        const installed = await listAll<GitHubRepository>(
+          "/installation/repositories",
+          await installationToken(jwt, id),
+          "listing the repositories the GitHub App is installed on",
+          { itemsOf: (body) => (body as { repositories: GitHubRepository[] }).repositories },
+        );
+        repositories.push(...installed.map((repository) => ({ owner: repository.owner.login, repo: repository.name })));
+      }
+      return repositories;
+    },
+
+    async listOpenPullRequests(repository) {
+      const pulls = await listAll<GitHubPull>(
+        `${repoPath(repository)}/pulls?state=open`,
+        await repositoryToken(repository),
+        `listing the open Pull Requests of ${repository.owner}/${repository.repo}`,
+      );
+      return pulls.map(summary);
     },
 
     async getPullRequest(ref) {
-      const credentials = loadCredentials();
-      if (!credentials) {
-        throw new ForgeAccessError("Diffwise isn't connected to GitHub yet. Create its GitHub App first, then install it on the repo.");
-      }
-      const token = await installationToken(credentials, ref);
+      const token = await repositoryToken(ref);
       const pullPath = `${repoPath(ref)}/pulls/${ref.number}`;
       const pullResponse = await githubApi(pullPath, { auth: token });
       if (pullResponse.status === 404) return undefined;
-      const pull = await json<{
-        title: string;
-        body: string | null;
-        user: { login: string } | null;
-        head: { sha: string };
-        base: { repo: { name: string; owner: { login: string } } };
-      }>(pullResponse, `fetching ${ref.owner}/${ref.repo}#${ref.number}`);
-
-      const files: ChangedFile[] = [];
-      for (let page = 1; files.length < MAX_FILES; page++) {
-        const batch = await json<{ filename: string; patch?: string }[]>(
-          await githubApi(`${pullPath}/files?per_page=100&page=${page}`, { auth: token }),
-          `listing the changed files of ${ref.owner}/${ref.repo}#${ref.number}`,
-        );
-        // GitHub sends no patch for binary files and diffs too large to show; the skip list reports those.
-        files.push(...batch.map((file) => ({ path: file.filename, patch: file.patch ?? "" })));
-        if (batch.length < 100) break;
-      }
-
+      const pull = await json<GitHubPull>(pullResponse, `fetching ${ref.owner}/${ref.repo}#${ref.number}`);
+      const files = await listAll<{ filename: string; patch?: string }>(
+        `${pullPath}/files`,
+        token,
+        `listing the changed files of ${ref.owner}/${ref.repo}#${ref.number}`,
+        { max: MAX_FILES },
+      );
       return {
-        // GitHub's own spelling of the names, whatever case the URL used.
-        owner: pull.base.repo.owner.login,
-        repo: pull.base.repo.name,
-        number: ref.number,
-        title: pull.title,
-        author: pull.user?.login ?? "ghost",
-        headCommit: pull.head.sha,
+        ...summary(pull),
         description: pull.body ?? "",
-        files,
+        // GitHub sends no patch for binary files and diffs too large to show; the skip list reports those.
+        files: files.map((file) => ({ path: file.filename, patch: file.patch ?? "" })),
       };
     },
   };
 }
 
-function repoPath({ owner, repo }: Pick<PullRequestRef, "owner" | "repo">): string {
+function summary(pull: GitHubPull): PullRequestSummary {
+  return {
+    // GitHub's own spelling of the names, whatever case the URL used.
+    owner: pull.base.repo.owner.login,
+    repo: pull.base.repo.name,
+    number: pull.number,
+    title: pull.title,
+    author: pull.user?.login ?? "ghost",
+    headCommit: pull.head.sha,
+  };
+}
+
+/**
+ * Every item of one of GitHub's paginated listings, fetched 100 to a page until a short page or `max` items.
+ * `itemsOf` picks the items out of a page's body, for the listings that wrap them in an object.
+ */
+async function listAll<T>(
+  path: string,
+  auth: string,
+  doing: string,
+  { max = Infinity, itemsOf = (body) => body as T[] }: { max?: number; itemsOf?: (body: unknown) => T[] } = {},
+): Promise<T[]> {
+  const items: T[] = [];
+  for (let page = 1; items.length < max; page++) {
+    const separator = path.includes("?") ? "&" : "?";
+    const batch = itemsOf(await json<unknown>(await githubApi(`${path}${separator}per_page=100&page=${page}`, { auth }), doing));
+    items.push(...batch);
+    if (batch.length < 100) break;
+  }
+  return items;
+}
+
+function repoPath({ owner, repo }: RepositoryRef): string {
   return `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
 }
 

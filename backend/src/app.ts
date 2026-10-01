@@ -4,13 +4,15 @@ import type {
   ApiError,
   GitHubAppStatus,
   ModelProviderListing,
+  PullRequestDetail,
   PullRequestRef,
   PullRequestSummary,
+  RepositoryRef,
   Review,
   StartReviewRequest,
 } from "@diffwise/shared";
 import { getReview, saveReview, type Database } from "./db.ts";
-import { ForgeAccessError, type Forge } from "./forge.ts";
+import { ForgeAccessError, type Forge, type PullRequestSnapshot } from "./forge.ts";
 import {
   appManifest,
   convertManifestCode,
@@ -93,8 +95,13 @@ export function createApp({
     return c.json<ModelProviderListing[]>(listings);
   });
 
-  app.get("/api/pull-requests", async (c) => {
-    return c.json<PullRequestSummary[]>(await forge.listPullRequests());
+  app.get("/api/repositories", async (c) => {
+    return c.json<RepositoryRef[]>(await forge.listRepositories());
+  });
+
+  app.get("/api/repositories/:owner/:repo/pull-requests", async (c) => {
+    const { owner, repo } = c.req.param();
+    return c.json<PullRequestSummary[]>(await forge.listOpenPullRequests({ owner, repo }));
   });
 
   app.get("/api/pull-requests/by-url", async (c) => {
@@ -110,8 +117,15 @@ export function createApp({
     }
     const pullRequest = await forge.getPullRequest(ref);
     if (!pullRequest) return c.json<ApiError>({ error: pullRequestNotFound(ref) }, 404);
-    const { owner, repo, number, title, author, headCommit } = pullRequest;
-    return c.json<PullRequestSummary>({ owner, repo, number, title, author, headCommit });
+    return c.json<PullRequestDetail>(detail(pullRequest));
+  });
+
+  app.get("/api/repositories/:owner/:repo/pull-requests/:number", async (c) => {
+    const { owner, repo, number } = c.req.param();
+    // No Pull Request has a number that isn't a positive integer, so the Forge isn't asked.
+    const pullRequest = /^[1-9]\d*$/.test(number) ? await forge.getPullRequest({ owner, repo, number: Number(number) }) : undefined;
+    if (!pullRequest) return c.json<ApiError>({ error: `Pull Request ${owner}/${repo}#${number} not found` }, 404);
+    return c.json<PullRequestDetail>(detail(pullRequest));
   });
 
   app.post("/api/reviews", async (c) => {
@@ -151,6 +165,10 @@ export function createApp({
   });
 
   return app;
+}
+
+function detail({ owner, repo, number, title, author, headCommit, files }: PullRequestSnapshot): PullRequestDetail {
+  return { owner, repo, number, title, author, headCommit, changedFiles: files.map((file) => file.path) };
 }
 
 function pullRequestNotFound({ owner, repo, number }: PullRequestRef): string {

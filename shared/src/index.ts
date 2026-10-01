@@ -1,8 +1,11 @@
 // The API contract between the Diffwise backend and frontend.
 
-export interface PullRequestRef {
+export interface RepositoryRef {
   owner: string;
   repo: string;
+}
+
+export interface PullRequestRef extends RepositoryRef {
   number: number;
 }
 
@@ -10,6 +13,12 @@ export interface PullRequestSummary extends PullRequestRef {
   title: string;
   author: string;
   headCommit: string;
+}
+
+/** What the user sees of a Pull Request before starting a Review of it. */
+export interface PullRequestDetail extends PullRequestSummary {
+  /** The paths of the files it changes, in the Pull Request's file order. */
+  changedFiles: string[];
 }
 
 export const FINDING_KINDS = ["bad-practice", "security-issue"] as const;

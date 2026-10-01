@@ -63,15 +63,14 @@ export const FIXTURE_PULL_REQUESTS: PullRequestSnapshot[] = [
 
 export function fixtureForge(pullRequests: PullRequestSnapshot[] = FIXTURE_PULL_REQUESTS): Forge {
   return {
-    async listPullRequests() {
-      return pullRequests.map(({ owner, repo, number, title, author, headCommit }) => ({
-        owner,
-        repo,
-        number,
-        title,
-        author,
-        headCommit,
-      }));
+    async listRepositories() {
+      const repositories = new Map(pullRequests.map(({ owner, repo }) => [`${owner}/${repo}`, { owner, repo }]));
+      return [...repositories.values()];
+    },
+    async listOpenPullRequests(repository) {
+      return pullRequests
+        .filter((pr) => pr.owner === repository.owner && pr.repo === repository.repo)
+        .map(({ owner, repo, number, title, author, headCommit }) => ({ owner, repo, number, title, author, headCommit }));
     },
     async getPullRequest(ref) {
       return pullRequests.find(
@@ -85,8 +84,12 @@ export function fixtureForge(pullRequests: PullRequestSnapshot[] = FIXTURE_PULL_
 export function withFixtures(forge: Forge, pullRequests: PullRequestSnapshot[] = FIXTURE_PULL_REQUESTS): Forge {
   const fixtures = fixtureForge(pullRequests);
   return {
-    async listPullRequests() {
-      return [...(await fixtures.listPullRequests()), ...(await forge.listPullRequests())];
+    async listRepositories() {
+      return [...(await fixtures.listRepositories()), ...(await forge.listRepositories())];
+    },
+    async listOpenPullRequests(repository) {
+      const fixturePullRequests = await fixtures.listOpenPullRequests(repository);
+      return fixturePullRequests.length > 0 ? fixturePullRequests : forge.listOpenPullRequests(repository);
     },
     async getPullRequest(ref) {
       return (await fixtures.getPullRequest(ref)) ?? forge.getPullRequest(ref);

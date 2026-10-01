@@ -343,16 +343,6 @@ describe("Reviews", () => {
     expect((await app.request("/api/reviews/nope")).status).toBe(404);
   });
 
-  test("lists the Forge's Pull Requests", async () => {
-    const { app } = setup([pullRequest], []);
-
-    const listed = await (await app.request("/api/pull-requests")).json();
-
-    expect(listed).toEqual([
-      { owner: "acme", repo: "shop", number: 7, title: "Add user lookup", author: "octocat", headCommit: "abc1234" },
-    ]);
-  });
-
   test("a Security Reference on a Bad Practice is dropped", async () => {
     const { app } = setup([pullRequest], [{ findings: [{ ...sqlInjection, kind: "bad-practice" }] }]);
 

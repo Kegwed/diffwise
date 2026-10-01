@@ -2,7 +2,7 @@
 
 A self-hosted AI Pull Request reviewer. Diffwise reads a Pull Request's changes and reports Bad Practices and Security Issues, using a Model you choose (for example a local one through Ollama). See [CONTEXT.md](CONTEXT.md) for the vocabulary.
 
-> **Status: early.** Diffwise reviews a GitHub Pull Request you paste the URL of, and a built-in fixture Pull Request. Browsing your repos' Pull Requests isn't there yet.
+> **Status: early.** Diffwise reviews the open Pull Requests of the repositories its GitHub App is installed on, any Pull Request there you paste the URL of, and a built-in fixture Pull Request.
 
 ## Running it with Ollama
 
@@ -29,7 +29,9 @@ You need Node.js 24+ and [Ollama](https://ollama.com).
 
 4. Open http://localhost:5173 and connect Diffwise to GitHub (see [Connecting to GitHub](#connecting-to-github)), or skip that and try the fixture Pull Request.
 
-5. Pick a Model from the dropdown (it lists the Models each Model Provider offers, grouped by Model Provider), then paste a GitHub Pull Request URL and click **Review**, or click **Run review** on the fixture Pull Request. A Model Provider that can't be reached is shown as unavailable, with the reason. Each changed file is sent to the Model separately, so a Review takes a little while on a local Model. The Findings appear grouped by file when it's finished, along with each file's File Outcome: reviewed, skipped (lockfiles, minified assets, build output, binaries and very large diffs are never sent to the Model) or failed (the Model's reply was invalid or the call errored or timed out, twice). A Review with any skipped or failed file is flagged as having incomplete coverage.
+5. Browse to a Pull Request: pick a repository, then one of its open Pull Requests (the fixture Pull Request is in `diffwise-fixtures/bookshop`), or paste a GitHub Pull Request URL and click **Open**. Its detail view shows its title, author, head commit and changed files.
+
+6. Pick a Model from the dropdown (it lists the Models each Model Provider offers, grouped by Model Provider) and click **Review**. A Model Provider that can't be reached is shown as unavailable, with the reason. Each changed file is sent to the Model separately, so a Review takes a little while on a local Model. The Findings appear grouped by file when it's finished, along with each file's File Outcome: reviewed, skipped (lockfiles, minified assets, build output, binaries and very large diffs are never sent to the Model) or failed (the Model's reply was invalid or the call errored or timed out, twice). A Review with any skipped or failed file is flagged as having incomplete coverage.
 
 ### Connecting to GitHub
 
@@ -39,7 +41,7 @@ Diffwise reads Pull Requests through its own GitHub App, which you create once o
 2. GitHub sends you back to Diffwise, which saves the App's ID, private key and client credentials to `github-app.json` at the repo root (ignored by git, readable only by you). Don't commit or share it.
 3. The page then links to **install** the App. Install it on the repositories whose Pull Requests you want reviewed.
 
-Paste a Pull Request URL like `https://github.com/owner/repo/pull/123` (its `/files` or `/commits` tab works too) to review it. Pasting a repo the App isn't installed on says so, with the install link.
+The repositories you installed it on are then listed on Diffwise's first page, each leading to its open Pull Requests. Or paste a Pull Request URL like `https://github.com/owner/repo/pull/123` (its `/files` or `/commits` tab works too) to open it directly; that works for closed Pull Requests too. Pasting a repo the App isn't installed on says so, with the install link.
 
 To start over, delete the App on GitHub (Settings → Developer settings → GitHub Apps) and delete `github-app.json`.
 
@@ -78,8 +80,10 @@ The real GitHub adapter (`backend/src/github-forge.ts`) and the Manifest flow ta
 1. Move any existing `github-app.json` aside and run `npm run dev`. Open http://localhost:5173: it offers **Create GitHub App**.
 2. Click it. On GitHub, check the App asks for read-only **Pull requests**, **Contents** and **Metadata**, and that **Webhook** is inactive. Create it.
 3. You land back on Diffwise, which now says it's connected and links to installing the App. `github-app.json` exists, and `git status` doesn't list it.
-4. Paste a Pull Request URL from a repo the App **isn't** installed on and click **Review**: the error says to install the App there, with the link.
-5. Install the App on one repo (choose "Only select repositories"). Paste one of its Pull Request URLs: a Review runs on its real changed files, and the header shows its real head commit.
-6. Paste a Pull Request URL from another repo on the same account, one not selected in that installation: the error again says to install the App there.
-7. Paste `https://github.com/owner/repo/issues/1`: the error says it isn't a GitHub Pull Request URL.
-8. Delete the test App on GitHub and `github-app.json` when done.
+4. Paste a Pull Request URL from a repo the App **isn't** installed on and click **Open**: the error says to install the App there, with the link.
+5. Install the App on one repo (choose "Only select repositories") and reload Diffwise: that repo, and no other of yours, is listed under **Repositories** after the fixture one.
+6. Click the repo: its open Pull Requests are listed (closed and merged ones aren't), or it says there are none. Click one: the detail view shows its real title, author, head commit and changed files. The browser's back button leads back the same way.
+7. Paste that Pull Request's URL on the first page instead: it opens the same detail view. Click **Review**: a Review runs on its real changed files, and the header shows its real head commit.
+8. Paste a Pull Request URL from another repo on the same account, one not selected in that installation: the error again says to install the App there.
+9. Paste `https://github.com/owner/repo/issues/1`: the error says it isn't a GitHub Pull Request URL.
+10. Delete the test App on GitHub and `github-app.json` when done.

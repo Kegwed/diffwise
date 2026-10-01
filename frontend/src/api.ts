@@ -3,8 +3,10 @@ import type {
   GitHubAppStatus,
   ModelChoice,
   ModelProviderListing,
+  PullRequestDetail,
   PullRequestRef,
   PullRequestSummary,
+  RepositoryRef,
   Review,
   StartReviewRequest,
 } from "@diffwise/shared";
@@ -19,8 +21,21 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
-export function listPullRequests(): Promise<PullRequestSummary[]> {
-  return request("/api/pull-requests");
+/** The repositories the GitHub App is installed on. */
+export function listRepositories(): Promise<RepositoryRef[]> {
+  return request("/api/repositories");
+}
+
+function repositoryPath({ owner, repo }: RepositoryRef): string {
+  return `/api/repositories/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+}
+
+export function listOpenPullRequests(repository: RepositoryRef): Promise<PullRequestSummary[]> {
+  return request(`${repositoryPath(repository)}/pull-requests`);
+}
+
+export function getPullRequest(pullRequest: PullRequestRef): Promise<PullRequestDetail> {
+  return request(`${repositoryPath(pullRequest)}/pull-requests/${pullRequest.number}`);
 }
 
 export function getGitHubApp(): Promise<GitHubAppStatus> {
@@ -28,7 +43,7 @@ export function getGitHubApp(): Promise<GitHubAppStatus> {
 }
 
 /** The Pull Request a pasted GitHub Pull Request URL points at; throws with a message saying what's wrong otherwise. */
-export function findPullRequestByUrl(url: string): Promise<PullRequestSummary> {
+export function findPullRequestByUrl(url: string): Promise<PullRequestDetail> {
   return request(`/api/pull-requests/by-url?url=${encodeURIComponent(url)}`);
 }
 
