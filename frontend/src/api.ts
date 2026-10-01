@@ -9,6 +9,7 @@ import type {
   RepositoryListing,
   RepositoryRef,
   Review,
+  ReviewEvent,
   StartReviewRequest,
 } from "@diffwise/shared";
 
@@ -51,6 +52,7 @@ export function listModels(): Promise<ModelProviderListing[]> {
   return request("/api/models");
 }
 
+/** Starts a Review, which then runs on the backend: resolves right away with the Review, still running. */
 export function startReview(pullRequest: PullRequestRef, { modelProvider, model }: ModelChoice): Promise<Review> {
   const body: StartReviewRequest = { pullRequest, modelProvider, model };
   return request("/api/reviews", {
@@ -58,4 +60,31 @@ export function startReview(pullRequest: PullRequestRef, { modelProvider, model 
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
+}
+
+/**
+ * Follows a Review's progress stream until the Review completes: `onEvent` gets the Review as it stands, then each
+ * change to it. After a dropped connection the browser reconnects by itself, and the stream starts again from the
+ * Review as it then stands. `onLost` gets the reason if the stream can't be followed. Returns a function that stops
+ * following.
+ */
+export function followReview(id: string, onEvent: (event: ReviewEvent) => void, onLost: (reason: string) => void): () => void {
+  const path = `/api/reviews/${encodeURIComponent(id)}`;
+  const source = new EventSource(`${path}/events`);
+  source.onmessage = (message) => {
+    const event = JSON.parse(message.data) as ReviewEvent;
+    // The stream ends at completion; left open, the browser would reconnect to it.
+    if (event.type === "complete") source.close();
+    onEvent(event);
+  };
+  source.onerror = () => {
+    // Still open means the browser is reconnecting; closed means it gave up, as it does when the backend answers with an error.
+    if (source.readyState !== EventSource.CLOSED) return;
+    // The stream doesn't say what the error was; asking for the Review does.
+    request<Review>(path).then(
+      () => onLost("Lost the connection to this Review's progress. Reload the page to follow it again."),
+      (error: Error) => onLost(error.message),
+    );
+  };
+  return () => source.close();
 }

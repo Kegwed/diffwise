@@ -1,38 +1,44 @@
 import { useState } from "react";
-import type { ModelChoice, PullRequestRef, Review } from "@diffwise/shared";
+import type { ModelChoice, PullRequestRef } from "@diffwise/shared";
 import { getPullRequest, listModels, startReview } from "./api.ts";
 import { Breadcrumb } from "./Breadcrumb.tsx";
 import { Button } from "./design-system/index.ts";
 import { HeadCommit } from "./HeadCommit.tsx";
 import { firstModel, ModelPicker } from "./ModelPicker.tsx";
 import { ReviewView } from "./ReviewView.tsx";
-import { REPOSITORIES_HREF, repositoryHref } from "./route.ts";
+import { navigate, REPOSITORIES_HREF, repositoryHref, reviewHref } from "./route.ts";
+import { useFollowedReview } from "./useFollowedReview.ts";
 import { useLoaded } from "./useLoaded.ts";
 
-/** A Pull Request's detail view: what's about to be reviewed, the Model to review it with, and then its Review. */
-export function PullRequestView({ pullRequest }: { pullRequest: PullRequestRef }) {
+/**
+ * A Pull Request's detail view: what's about to be reviewed, the Model to review it with, and then the Review
+ * `reviewId` names, followed live while it runs.
+ */
+export function PullRequestView({ pullRequest, reviewId }: { pullRequest: PullRequestRef; reviewId?: string }) {
   const detail = useLoaded(() => getPullRequest(pullRequest));
   const modelListings = useLoaded(listModels);
   const [chosenModel, setChosenModel] = useState<ModelChoice>();
-  const [reviewing, setReviewing] = useState(false);
-  const [review, setReview] = useState<Review>();
-  const [reviewError, setReviewError] = useState<string>();
+  const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState<string>();
+  const followed = useFollowedReview(reviewId);
 
   const repository = `${pullRequest.owner}/${pullRequest.repo}`;
   const name = `${repository}#${pullRequest.number}`;
   const modelChoice = chosenModel ?? (modelListings.data && firstModel(modelListings.data));
-  const error = detail.error ?? modelListings.error ?? reviewError;
+  const error = detail.error ?? modelListings.error ?? startError ?? followed.error;
+  // A Review that was asked for and isn't known to be complete (or lost) is taken to be running.
+  const reviewing = starting || (reviewId !== undefined && !followed.error && followed.review?.status !== "complete");
 
-  async function runReview(modelChoice: ModelChoice) {
-    setReviewing(true);
-    setReview(undefined);
-    setReviewError(undefined);
+  async function start(modelChoice: ModelChoice) {
+    setStarting(true);
+    setStartError(undefined);
     try {
-      setReview(await startReview(pullRequest, modelChoice));
+      const { id } = await startReview(pullRequest, modelChoice);
+      navigate(reviewHref(pullRequest, id));
     } catch (e) {
-      setReviewError((e as Error).message);
+      setStartError((e as Error).message);
     } finally {
-      setReviewing(false);
+      setStarting(false);
     }
   }
 
@@ -62,14 +68,14 @@ export function PullRequestView({ pullRequest }: { pullRequest: PullRequestRef }
               ))}
             </ul>
             {modelListings.data && <ModelPicker listings={modelListings.data} choice={modelChoice} onChoose={setChosenModel} />}
-            <Button variant="primary" onClick={() => modelChoice && runReview(modelChoice)} disabled={reviewing || !modelChoice}>
+            <Button variant="primary" onClick={() => modelChoice && start(modelChoice)} disabled={reviewing || !modelChoice}>
               {reviewing ? "Reviewing…" : "Review"}
             </Button>
           </>
         )}
       </section>
       {error && <p role="alert">{error}</p>}
-      {review && <ReviewView review={review} />}
+      {followed.review && <ReviewView review={followed.review} />}
     </>
   );
 }

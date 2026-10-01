@@ -1,6 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { DIFF_MARKERS, FINDING_KINDS, parsePatch, SEVERITIES, type FileOutcome, type Finding, type Review } from "@diffwise/shared";
+import {
+  applyReviewEvent,
+  DIFF_MARKERS,
+  FINDING_KINDS,
+  parsePatch,
+  SEVERITIES,
+  type FileOutcome,
+  type Finding,
+  type Review,
+  type ReviewEvent,
+} from "@diffwise/shared";
 import type { ChangedFile, PullRequestSnapshot } from "./forge.ts";
 import type { ModelProvider } from "./model-provider.ts";
 import { skipReason } from "./skip-list.ts";
@@ -38,40 +48,94 @@ export interface ReviewOptions {
   modelCallTimeoutMs?: number;
 }
 
-export async function runReview(
+/** A Review that was started and runs on its own, whoever is following it. */
+export interface ReviewRun {
+  /** The Review as it stands now. */
+  current(): Review;
+  /**
+   * The Review's progress from now on: first the Review as it stands, then each change to it, ending with its
+   * completion. Aborting `signal` ends it early, for a follower that has gone.
+   */
+  events(signal?: AbortSignal): AsyncIterable<ReviewEvent>;
+  /** Resolves with the complete Review. */
+  finished: Promise<Review>;
+}
+
+/** Starts a Review of the Pull Request's changed files, one file at a time in the Pull Request's file order. */
+export function startReview(
   pullRequest: PullRequestSnapshot,
   model: string,
   modelProvider: ModelProvider,
   { modelCallTimeoutMs = DEFAULT_MODEL_CALL_TIMEOUT_MS }: ReviewOptions = {},
-): Promise<Review> {
+): ReviewRun {
   const settings: ModelCallSettings = { model, modelProvider, timeoutMs: modelCallTimeoutMs };
-  const fileOutcomes: FileOutcome[] = [];
-  const findings: Finding[] = [];
-  for (const file of pullRequest.files) {
-    const reason = skipReason(file);
-    if (reason) {
-      fileOutcomes.push({ file: file.path, outcome: "skipped", reason });
-      continue;
-    }
-    const result = await reviewFile(pullRequest, file, settings);
-    if (result.ok) {
-      findings.push(...result.findings);
-      fileOutcomes.push({ file: file.path, outcome: "reviewed", patch: file.patch });
-    } else {
-      fileOutcomes.push({ file: file.path, outcome: "failed", reason: result.reason });
-    }
-  }
   const { owner, repo, number, headCommit } = pullRequest;
-  return {
+  let review: Review = {
     id: randomUUID(),
     pullRequest: { owner, repo, number },
     headCommit,
     modelProvider: modelProvider.name,
     model,
     createdAt: new Date().toISOString(),
-    fileOutcomes,
-    findings,
+    status: "running",
+    fileOutcomes: [],
+    pendingFiles: pullRequest.files.map((file) => ({ file: file.path, state: "queued" })),
+    findings: [],
   };
+  const followers = new Set<(event: ReviewEvent) => void>();
+
+  function progress(event: ReviewEvent) {
+    review = applyReviewEvent(review, event);
+    for (const follower of followers) follower(event);
+  }
+
+  function settle(fileOutcome: FileOutcome, findings: Finding[] = []) {
+    progress({ type: "file-settled", fileOutcome, findings });
+  }
+
+  async function run(): Promise<Review> {
+    for (const file of pullRequest.files) {
+      const reason = skipReason(file);
+      if (reason) {
+        settle({ file: file.path, outcome: "skipped", reason });
+        continue;
+      }
+      progress({ type: "file-reviewing", file: file.path });
+      const result = await reviewFile(pullRequest, file, settings);
+      if (result.ok) settle({ file: file.path, outcome: "reviewed", patch: file.patch }, result.findings);
+      else settle({ file: file.path, outcome: "failed", reason: result.reason });
+    }
+    progress({ type: "complete" });
+    return review;
+  }
+
+  async function* events(signal?: AbortSignal): AsyncGenerator<ReviewEvent> {
+    const unsent: ReviewEvent[] = [{ type: "review", review }];
+    // A Review that completed before it was followed has no more changes to wait for.
+    if (review.status === "complete") unsent.push({ type: "complete" });
+    let wake = () => {};
+    const follower = (event: ReviewEvent) => {
+      unsent.push(event);
+      wake();
+    };
+    followers.add(follower);
+    signal?.addEventListener("abort", () => wake(), { once: true });
+    try {
+      while (!signal?.aborted) {
+        const event = unsent.shift();
+        if (!event) {
+          await new Promise<void>((resolve) => (wake = resolve));
+          continue;
+        }
+        yield event;
+        if (event.type === "complete") return;
+      }
+    } finally {
+      followers.delete(follower);
+    }
+  }
+
+  return { current: () => review, events, finished: run() };
 }
 
 interface ModelCallSettings {

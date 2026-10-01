@@ -31,7 +31,7 @@ You need Node.js 24+ and [Ollama](https://ollama.com).
 
 5. Browse to a Pull Request: pick a repository, then one of its open Pull Requests (the fixture Pull Request is in `diffwise-fixtures/bookshop`), or paste a GitHub Pull Request URL and click **Open**. Its detail view shows its title, author, head commit and changed files.
 
-6. Pick a Model from the dropdown (it lists the Models each Model Provider offers, grouped by Model Provider) and click **Review**. A Model Provider that can't be reached is shown as unavailable, with the reason. Each changed file is sent to the Model separately, so a Review takes a little while on a local Model. The Findings appear grouped by file when it's finished, along with each file's File Outcome: reviewed, skipped (lockfiles, minified assets, build output, binaries and very large diffs are never sent to the Model) or failed (the Model's reply was invalid or the call errored or timed out, twice). A Review with any skipped or failed file is flagged as having incomplete coverage.
+6. Pick a Model from the dropdown (it lists the Models each Model Provider offers, grouped by Model Provider) and click **Review**. A Model Provider that can't be reached is shown as unavailable, with the reason. Each changed file is sent to the Model separately, so a Review takes a little while on a local Model. It runs on the backend and the page follows it live: each file shows as queued, then reviewing, and its Findings appear as soon as it finishes. The page's address names the Review, so you can close the page and reopen it later to pick the Review up where it stands (a Review still running when the backend restarts is lost). The Findings are grouped by file, along with each file's File Outcome: reviewed, skipped (lockfiles, minified assets, build output, binaries and very large diffs are never sent to the Model) or failed (the Model's reply was invalid or the call errored or timed out, twice). A Review with any skipped or failed file is flagged as having incomplete coverage.
 
 ### Connecting to GitHub
 
@@ -69,8 +69,8 @@ npm run typecheck   # all workspaces
 
 The workspace has three packages:
 
-- `shared`: the API contract types (Pull Request summary, Review, File Outcome, Finding), used by both sides.
-- `backend`: a Hono HTTP API. The Review Engine depends only on the `Forge` and `ModelProvider` ports. Tests drive the API with the fixture Forge, a scripted fake Model Provider and in-memory SQLite.
+- `shared`: the API contract types (Pull Request summary, Review, File Outcome, Finding, the progress events of a running Review), used by both sides.
+- `backend`: a Hono HTTP API. The Review Engine depends only on the `Forge` and `ModelProvider` ports. A started Review runs in the background, and `GET /api/reviews/:id/events` streams its progress as server-sent events. Tests drive the API with the fixture Forge, a scripted fake Model Provider and in-memory SQLite.
 - `frontend`: React + Vite. Tests render the app with React Testing Library against fixture API responses.
 
 ### Checking the GitHub connection by hand

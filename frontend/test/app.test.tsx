@@ -1,7 +1,15 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test, vi } from "vitest";
-import type { GitHubAppStatus, ModelProviderListing, PullRequestDetail, PullRequestSummary, Review } from "@diffwise/shared";
+import type {
+  Finding,
+  GitHubAppStatus,
+  ModelProviderListing,
+  PullRequestDetail,
+  PullRequestSummary,
+  Review,
+  ReviewEvent,
+} from "@diffwise/shared";
 import { App } from "../src/App.tsx";
 
 const pullRequest: PullRequestSummary = {
@@ -37,6 +45,8 @@ const review: Review = {
   modelProvider: "Ollama",
   model: "llama3.1:8b",
   createdAt: "2026-09-27T10:00:00.000Z",
+  status: "complete",
+  pendingFiles: [],
   fileOutcomes: [
     { file: "src/users.ts", outcome: "reviewed", patch: usersPatch },
     { file: "src/config.ts", outcome: "reviewed", patch: configPatch },
@@ -118,7 +128,63 @@ const createdGitHubApp: GitHubAppStatus = {
   installUrl: "https://github.com/apps/diffwise-a1b2c3/installations/new",
 };
 
-/** Stubs fetch with the backend's API responses; `routes` answers any other URL. */
+/** Stands in for the browser's EventSource on a Review's progress stream, sending the events a test gives it. */
+class FakeProgressStream {
+  static readonly CLOSED = 2;
+  readyState = 1;
+  onmessage: ((message: { data: string }) => void) | null = null;
+  onerror: (() => void) | null = null;
+
+  constructor(readonly url: string) {}
+
+  close() {
+    this.readyState = FakeProgressStream.CLOSED;
+  }
+
+  deliver(events: ReviewEvent[]) {
+    for (const event of events) this.onmessage?.({ data: JSON.stringify(event) });
+  }
+
+  send(...events: ReviewEvent[]) {
+    act(() => this.deliver(events));
+  }
+
+  /** Fails for good, as the browser's does when the backend answers with an error. */
+  fail() {
+    this.readyState = FakeProgressStream.CLOSED;
+    act(() => this.onerror?.());
+  }
+}
+
+/**
+ * Stubs the progress stream the page follows a Review on. With `script`, it sends those events as soon as it's
+ * followed; without, the test sends them on the stream `followed()` resolves with.
+ */
+function stubProgressStream(script?: ReviewEvent[]) {
+  const streams: FakeProgressStream[] = [];
+  vi.stubGlobal(
+    "EventSource",
+    class extends FakeProgressStream {
+      constructor(url: string) {
+        super(url);
+        streams.push(this);
+        if (script) queueMicrotask(() => this.deliver(script));
+      }
+    },
+  );
+  return {
+    followed: () =>
+      waitFor(() => {
+        expect(streams).not.toHaveLength(0);
+        return streams.at(-1)!;
+      }),
+  };
+}
+
+/**
+ * Stubs fetch with the backend's API responses; `routes` answers any other URL. A started Review is `startedReview`,
+ * already complete when the page follows it.
+ */
 function stubApi(
   startedReview: Review = review,
   models: ModelProviderListing[] = modelListing,
@@ -137,6 +203,7 @@ function stubApi(
     return Response.json({ error: "not found" }, { status: 404 });
   });
   vi.stubGlobal("fetch", fetch);
+  stubProgressStream([{ type: "review", review: startedReview }, { type: "complete" }]);
   return fetch;
 }
 
@@ -351,6 +418,160 @@ test("Findings on lines the diff doesn't show are listed after it, by Severity, 
   expect(findingsBeneath(config, 1)).toEqual(["Low at 1"]);
   expect(within(config).getByText(/on lines this diff doesn't show/i)).toBeInTheDocument();
   expect(findingTitles(config)).toEqual(["Low at 1", "Critical at 20", "High at 4", "High at 9"]);
+});
+
+describe("live progress while a Review runs", () => {
+  const running: Review = {
+    ...review,
+    status: "running",
+    fileOutcomes: [],
+    pendingFiles: [
+      { file: "src/users.ts", state: "reviewing" },
+      { file: "src/config.ts", state: "queued" },
+    ],
+    findings: [],
+  };
+  const [sqlInjection, magicNumber, swallowedError] = review.findings as [Finding, Finding, Finding];
+
+  test("starting a Review puts it in the URL and follows its progress stream", async () => {
+    stubApi();
+    const progress = stubProgressStream();
+    await startReview();
+
+    const stream = await progress.followed();
+
+    expect(stream.url).toBe("/api/reviews/review-1/events");
+    expect(window.location.hash).toBe("#/acme/shop/pull/7/reviews/review-1");
+  });
+
+  test("each file shows its state as it changes, and its Findings appear as it finishes", async () => {
+    stubApi();
+    const progress = stubProgressStream();
+    await startReview();
+    const stream = await progress.followed();
+
+    stream.send({ type: "review", review: running });
+
+    const users = screen.getByRole("region", { name: "src/users.ts" });
+    const config = screen.getByRole("region", { name: "src/config.ts" });
+    expect(within(users).getByText("Reviewing")).toHaveClass("dw-badge-accent");
+    expect(within(config).getByText("Queued")).toHaveClass("dw-badge-outline");
+    expect(screen.getByRole("status")).toHaveTextContent("Reviewing: 0 of 2 files done.");
+    expect(screen.getByText("No Findings yet.")).toBeInTheDocument();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+
+    stream.send({
+      type: "file-settled",
+      fileOutcome: { file: "src/users.ts", outcome: "reviewed", patch: usersPatch },
+      findings: [sqlInjection, swallowedError],
+    });
+
+    expect(within(users).getByText("Reviewed")).toBeInTheDocument();
+    expect(findingsBeneath(users, 3)).toEqual(["SQL injection"]);
+    expect(findingsBeneath(users, 6)).toEqual(["Swallowed error"]);
+    expect(within(config).getByText("Queued")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Reviewing: 1 of 2 files done.");
+    expect(screen.queryByText(/no findings/i)).not.toBeInTheDocument();
+
+    stream.send({ type: "file-reviewing", file: "src/config.ts" });
+
+    expect(within(config).getByText("Reviewing")).toBeInTheDocument();
+    expect(within(config).queryByText("Queued")).not.toBeInTheDocument();
+
+    stream.send({
+      type: "file-settled",
+      fileOutcome: { file: "src/config.ts", outcome: "failed", reason: "Failed twice. The Model's reply was not valid JSON." },
+      findings: [],
+    });
+
+    expect(within(config).getByText("Failed")).toBeInTheDocument();
+    expect(within(config).getByText(/not valid JSON/)).toBeInTheDocument();
+    expect(screen.getByRole("note")).toHaveTextContent(/1 file failed/i);
+    expect(screen.getByRole("status")).toHaveTextContent("Reviewing: 2 of 2 files done.");
+
+    stream.send({ type: "complete" });
+
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(findingTitles(users)).toEqual(["SQL injection", "Swallowed error"]);
+  });
+
+  test("no other Review can be started while one runs", async () => {
+    stubApi();
+    const progress = stubProgressStream();
+    await startReview();
+    const stream = await progress.followed();
+
+    stream.send({ type: "review", review: running });
+
+    expect(screen.getByRole("button", { name: "Reviewing…" })).toBeDisabled();
+
+    stream.send(
+      { type: "file-settled", fileOutcome: { file: "src/users.ts", outcome: "reviewed", patch: usersPatch }, findings: [] },
+      { type: "file-settled", fileOutcome: { file: "src/config.ts", outcome: "reviewed", patch: configPatch }, findings: [magicNumber] },
+      { type: "complete" },
+    );
+
+    expect(screen.getByRole("button", { name: "Review" })).toBeEnabled();
+    expect(stream.readyState).toBe(FakeProgressStream.CLOSED);
+  });
+
+  test("reopening a running Review picks it up as it stands, then follows it live", async () => {
+    stubApi();
+    const progress = stubProgressStream();
+    window.location.hash = "#/acme/shop/pull/7/reviews/review-1";
+    render(<App />);
+    const stream = await progress.followed();
+
+    stream.send({
+      type: "review",
+      review: {
+        ...running,
+        fileOutcomes: [{ file: "src/users.ts", outcome: "reviewed", patch: usersPatch }],
+        pendingFiles: [{ file: "src/config.ts", state: "reviewing" }],
+        findings: [sqlInjection],
+      },
+    });
+
+    expect(stream.url).toBe("/api/reviews/review-1/events");
+    expect(findingsBeneath(screen.getByRole("region", { name: "src/users.ts" }), 3)).toEqual(["SQL injection"]);
+    const config = screen.getByRole("region", { name: "src/config.ts" });
+    expect(within(config).getByText("Reviewing")).toBeInTheDocument();
+
+    stream.send({
+      type: "file-settled",
+      fileOutcome: { file: "src/config.ts", outcome: "reviewed", patch: configPatch },
+      findings: [magicNumber],
+    });
+
+    expect(findingsBeneath(config, 2)).toEqual(["Magic number"]);
+  });
+
+  test("leaving the Pull Request stops following the Review", async () => {
+    stubApi();
+    const progress = stubProgressStream();
+    await startReview();
+    const stream = await progress.followed();
+    stream.send({ type: "review", review: running });
+
+    await userEvent.click(within(screen.getByRole("navigation", { name: "Breadcrumb" })).getByRole("link", { name: "Repositories" }));
+
+    await screen.findByRole("link", { name: "acme/docs" });
+    expect(stream.readyState).toBe(FakeProgressStream.CLOSED);
+  });
+
+  test("a Review that can't be followed says why", async () => {
+    const error = "Review review-1 not found. A Review that was still running when Diffwise restarted is lost.";
+    stubApi(review, modelListing, { "/api/reviews/review-1": () => Response.json({ error }, { status: 404 }) });
+    const progress = stubProgressStream();
+    window.location.hash = "#/acme/shop/pull/7/reviews/review-1";
+    render(<App />);
+    const stream = await progress.followed();
+
+    stream.fail();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(error);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Review" })).toBeEnabled());
+  });
 });
 
 test.each([

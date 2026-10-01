@@ -6,6 +6,18 @@ import { ForgeAccessError, type Forge, type PullRequestSnapshot } from "../src/f
 /** Scripts a Model call that never answers, until the request's signal aborts it. */
 export const hang = Symbol("hang");
 
+class HeldResponse {
+  /** Lets the Model call answer. */
+  release!: () => void;
+  readonly released = new Promise<void>((resolve) => (this.release = resolve));
+  constructor(readonly response: unknown) {}
+}
+
+/** Scripts a Model call that answers with `response` only once released, so a test can look at a Review mid-run. */
+export function held(response: unknown) {
+  return new HeldResponse(response);
+}
+
 export interface FakeModelProviderOptions {
   name?: string;
   /** The Models it lists, or an Error its listing fails with. */
@@ -14,7 +26,7 @@ export interface FakeModelProviderOptions {
 
 /**
  * A Model Provider that answers each chat request with the next scripted response, and records the requests.
- * A scripted Error is thrown instead of answered; a scripted `hang` never answers.
+ * A scripted Error is thrown instead of answered; a scripted `hang` never answers; a `held` one answers once released.
  */
 export function fakeModelProvider(
   responses: unknown[],
@@ -30,7 +42,11 @@ export function fakeModelProvider(
     async complete(request) {
       requests.push(request);
       if (requests.length > responses.length) throw new Error("fake Model Provider ran out of responses");
-      const response = responses[requests.length - 1];
+      let response = responses[requests.length - 1];
+      if (response instanceof HeldResponse) {
+        await response.released;
+        response = response.response;
+      }
       if (response instanceof Error) throw response;
       if (response === hang) {
         return new Promise<string>((_, reject) =>

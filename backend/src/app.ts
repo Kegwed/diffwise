@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { streamSSE } from "hono/streaming";
 import { randomUUID } from "node:crypto";
 import type {
   ApiError,
@@ -9,6 +10,7 @@ import type {
   RepositoryListing,
   RepositoryRef,
   Review,
+  ReviewEvent,
   StartReviewRequest,
 } from "@diffwise/shared";
 import { getReview, saveReview, type Database } from "./db.ts";
@@ -24,7 +26,7 @@ import {
 } from "./github-app.ts";
 import type { ModelProvider } from "./model-provider.ts";
 import { parsePullRequestUrl } from "./pull-request-url.ts";
-import { runReview } from "./review-engine.ts";
+import { startReview, type ReviewRun } from "./review-engine.ts";
 
 export interface AppDependencies {
   forge: Forge;
@@ -52,6 +54,8 @@ export function createApp({
   const app = new Hono();
   /** The state each Manifest page sent to GitHub, so only GitHub's redirect back from one of them is accepted. */
   const manifestStates = new Set<string>();
+  /** The Reviews still running, by id. They live here until they're complete and saved, so a restart loses them. */
+  const running = new Map<string, ReviewRun>();
 
   app.get("/api/github-app", (c) => {
     const credentials = githubAppStore.load();
@@ -146,16 +150,45 @@ export function createApp({
     if (!pullRequest) {
       return c.json<ApiError>({ error: pullRequestNotFound(ref) }, 404);
     }
-    const review = await runReview(pullRequest, model, modelProvider, { modelCallTimeoutMs });
-    saveReview(db, review);
-    return c.json<Review>(review, 201);
+    const run = startReview(pullRequest, model, modelProvider, { modelCallTimeoutMs });
+    const { id } = run.current();
+    running.set(id, run);
+    // Not awaited: the Review runs on, whether or not anyone follows it.
+    run.finished
+      .then((review) => {
+        saveReview(db, review);
+        running.delete(id);
+      })
+      // A Review that couldn't be saved stays here, so it can still be read until Diffwise restarts.
+      .catch((error) => console.error(`Review ${id} didn't complete, or wasn't saved:`, error));
+    return c.json<Review>(run.current(), 201);
   });
 
   app.get("/api/reviews/:id", (c) => {
-    const review = getReview(db, c.req.param("id"));
-    if (!review) return c.json<ApiError>({ error: "Review not found" }, 404);
+    const id = c.req.param("id");
+    const review = running.get(id)?.current() ?? getReview(db, id);
+    if (!review) return c.json<ApiError>({ error: reviewNotFound(id) }, 404);
     return c.json<Review>(review);
   });
+
+  app.get("/api/reviews/:id/events", (c) => {
+    const id = c.req.param("id");
+    const follower = new AbortController();
+    const events = progress(id, follower.signal);
+    if (!events) return c.json<ApiError>({ error: reviewNotFound(id) }, 404);
+    return streamSSE(c, async (stream) => {
+      stream.onAbort(() => follower.abort());
+      for await (const event of events) await stream.writeSSE({ data: JSON.stringify(event) });
+    });
+  });
+
+  /** A Review's progress stream, until it completes or `signal` aborts: live if it's running, else as it was saved. */
+  function progress(id: string, signal: AbortSignal): AsyncIterable<ReviewEvent> | Iterable<ReviewEvent> | undefined {
+    const run = running.get(id);
+    if (run) return run.events(signal);
+    const saved = getReview(db, id);
+    return saved && [{ type: "review", review: saved }, { type: "complete" }];
+  }
 
   app.onError((error, c) => {
     if (error instanceof ForgeAccessError) return c.json<ApiError>({ error: error.message }, 403);
@@ -169,6 +202,10 @@ export function createApp({
 
 function detail({ owner, repo, number, title, author, headCommit, files }: PullRequestSnapshot): PullRequestDetail {
   return { owner, repo, number, title, author, headCommit, changedFiles: files.map((file) => file.path) };
+}
+
+function reviewNotFound(id: string): string {
+  return `Review ${id} not found. A Review that was still running when Diffwise restarted is lost.`;
 }
 
 /** `number` as asked for, which in a URL may not be a number at all. */

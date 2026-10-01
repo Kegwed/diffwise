@@ -12,7 +12,9 @@ export function App() {
       {route.view === "repositories" && <RepositoriesView />}
       {/* Keyed, so going from one repository or Pull Request to another starts the view afresh. */}
       {route.view === "repository" && <RepositoryView key={repositoryHref(route.repository)} repository={route.repository} />}
-      {route.view === "pull-request" && <PullRequestView key={pullRequestHref(route.pullRequest)} pullRequest={route.pullRequest} />}
+      {route.view === "pull-request" && (
+        <PullRequestView key={pullRequestHref(route.pullRequest)} pullRequest={route.pullRequest} reviewId={route.reviewId} />
+      )}
     </main>
   );
 }

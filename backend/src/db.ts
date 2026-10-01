@@ -55,6 +55,7 @@ function addColumnIfMissing(db: Database, table: string, column: string, definit
   if (!columns.some(({ name }) => name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
+/** Saves a complete Review. */
 export function saveReview(db: Database, review: Review): void {
   const insertReview = db.prepare(
     "INSERT INTO reviews (id, owner, repo, number, head_commit, model_provider, model, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -142,7 +143,10 @@ export function getReview(db: Database, id: string): Review | undefined {
     modelProvider: row.model_provider,
     model: row.model,
     createdAt: row.created_at,
+    // Only complete Reviews are saved.
+    status: "complete",
     fileOutcomes: fileOutcomeRows.map(toFileOutcome),
+    pendingFiles: [],
     findings: findingRows.map(toFinding),
   };
 }
