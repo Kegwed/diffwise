@@ -3,9 +3,9 @@ import { Badge } from "./design-system/index.ts";
 import { HeadCommit } from "./HeadCommit.tsx";
 import { reviewHref } from "./route.ts";
 
-const KIND_LABELS: Record<FindingKind, [one: string, many: string]> = {
-  "security-issue": ["Security Issue", "Security Issues"],
-  "bad-practice": ["Bad Practice", "Bad Practices"],
+const KIND_LABELS: Record<FindingKind, { one: string; many: string }> = {
+  "security-issue": { one: "Security Issue", many: "Security Issues" },
+  "bad-practice": { one: "Bad Practice", many: "Bad Practices" },
 };
 
 const DATE_FORMAT = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
@@ -54,7 +54,7 @@ export function ReviewList({
 function findingCounts(counts: ReviewSummary["findingCounts"]): string {
   const parts = (["security-issue", "bad-practice"] as const).flatMap((kind) => {
     const count = counts[kind];
-    return count > 0 ? [`${count} ${KIND_LABELS[kind][count === 1 ? 0 : 1]}`] : [];
+    return count > 0 ? [`${count} ${KIND_LABELS[kind][count === 1 ? "one" : "many"]}`] : [];
   });
   return parts.length > 0 ? parts.join(", ") : "No Findings";
 }

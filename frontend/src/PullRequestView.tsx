@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useReducer, useState } from "react";
 import type { ModelChoice, PullRequestRef } from "@diffwise/shared";
 import { getPullRequest, listModels, listReviews, startReview } from "./api.ts";
 import { Breadcrumb } from "./Breadcrumb.tsx";
@@ -8,6 +8,7 @@ import { firstModel, ModelPicker } from "./ModelPicker.tsx";
 import { ReviewList } from "./ReviewList.tsx";
 import { ReviewView } from "./ReviewView.tsx";
 import { navigate, REPOSITORIES_HREF, repositoryHref, reviewHref } from "./route.ts";
+import { useCompletions } from "./useCompletions.ts";
 import { useFollowedReview } from "./useFollowedReview.ts";
 import { useLoaded } from "./useLoaded.ts";
 
@@ -16,19 +17,25 @@ import { useLoaded } from "./useLoaded.ts";
  * `reviewId` names, followed live while it runs.
  */
 export function PullRequestView({ pullRequest, reviewId }: { pullRequest: PullRequestRef; reviewId?: string }) {
-  const detail = useLoaded(() => getPullRequest(pullRequest));
+  // Loaded again when another Review is opened, which a Review just started is: it may be of a newer head commit.
+  const detail = useLoaded(() => getPullRequest(pullRequest), [reviewId]);
   const modelListings = useLoaded(listModels);
   const [chosenModel, setChosenModel] = useState<ModelChoice>();
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string>();
   const followed = useFollowedReview(reviewId);
-  // Listed again when another Review is opened, which a Review just started is, and when the one followed completes.
-  const reviews = useLoaded(() => listReviews(pullRequest), [reviewId, followed.completedWhileFollowed]);
+  const [relistings, relist] = useReducer((count: number) => count + 1, 0);
+  // Listed again when another Review is opened, and when a running one completes: the one followed, or any other.
+  const reviews = useLoaded(() => listReviews(pullRequest), [reviewId, followed.completedWhileFollowed, relistings]);
+  const runningUnfollowed = (reviews.data ?? []).filter((review) => review.status === "running" && review.id !== reviewId);
+  useCompletions(runningUnfollowed.map((review) => review.id), relist);
 
+  const opened = followed.review;
   const repository = `${pullRequest.owner}/${pullRequest.repo}`;
   const name = `${repository}#${pullRequest.number}`;
   const modelChoice = chosenModel ?? (modelListings.data && firstModel(modelListings.data));
-  const error = detail.error ?? modelListings.error ?? reviews.error ?? startError ?? followed.error;
+  // Why a Review couldn't be started comes first: it answers what the user just did.
+  const error = startError ?? detail.error ?? modelListings.error ?? reviews.error ?? followed.error;
   // A Review that was asked for and isn't known to be complete (or lost) is taken to be running.
   const reviewing = starting || (reviewId !== undefined && !followed.error && followed.review?.status !== "complete");
 
@@ -79,11 +86,11 @@ export function PullRequestView({ pullRequest, reviewId }: { pullRequest: PullRe
       </section>
       {error && <p role="alert">{error}</p>}
       {reviews.data && <ReviewList pullRequest={pullRequest} reviews={reviews.data} openId={reviewId} />}
-      {followed.review && (
+      {opened && (
         <ReviewView
-          review={followed.review}
+          review={opened}
           outdated={reviews.data?.find((review) => review.id === reviewId)?.outdated}
-          onReviewLatest={reviewing ? undefined : () => start(followed.review!)}
+          onReviewLatest={reviewing ? undefined : () => start(opened)}
         />
       )}
     </>

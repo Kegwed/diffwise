@@ -64,7 +64,7 @@ a {
   box-shadow: var(--focus-ring);
 }
 
-/* Rows: the repositories, and a repository's open Pull Requests */
+/* Rows: the Repositories, a Repository's open Pull Requests, and a Pull Request's Reviews */
 
 .rows {
   list-style: none;
