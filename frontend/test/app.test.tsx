@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import type {
   Finding,
   GitHubAppStatus,
@@ -815,6 +815,191 @@ describe("a Pull Request's Reviews", () => {
   });
 });
 
+describe("the Findings panel", () => {
+  /** Starts the Review and gives its Findings panel, next to the diff. */
+  async function openPanel(startedReview: Review = review) {
+    stubApi(startedReview);
+    await startReview();
+    return screen.findByRole("complementary", { name: "Findings" });
+  }
+
+  /** What each button of one of the panel's filters says, in order: what it filters by, then its count of Findings. */
+  function filterButtons(panel: HTMLElement, filter: string) {
+    return within(within(panel).getByRole("group", { name: filter }))
+      .getAllByRole("button")
+      .map((button) => button.textContent);
+  }
+
+  /** What each Finding in the panel's list says, in order. */
+  function listedFindings(panel: HTMLElement) {
+    return within(within(panel).getByRole("list"))
+      .getAllByRole("listitem")
+      .map((finding) => finding.textContent);
+  }
+
+  test("the panel shows how many Findings the Review reports of each kind and of each Severity", async () => {
+    const panel = await openPanel();
+
+    expect(filterButtons(panel, "Kind")).toEqual(["Security Issue 1", "Bad Practices 2"]);
+    expect(filterButtons(panel, "Severity")).toEqual(["Critical 1", "High 0", "Medium 1", "Low 1"]);
+  });
+
+  test("the panel lists the Findings in the order the diff shows them, each with its Severity, title and lines", async () => {
+    const panel = await openPanel();
+
+    expect(listedFindings(panel)).toEqual([
+      "Critical SQL injection src/users.ts:3",
+      "Medium Swallowed error src/users.ts:5–6",
+      "Low Magic number src/config.ts:1–2",
+    ]);
+  });
+
+  test("filtering by kind hides the Findings of the other kind, in the panel and in the diff", async () => {
+    const panel = await openPanel();
+    const securityIssues = within(panel).getByRole("button", { name: /security issue/i });
+    expect(securityIssues).toHaveAttribute("aria-pressed", "false");
+
+    await userEvent.click(securityIssues);
+
+    expect(securityIssues).toHaveAttribute("aria-pressed", "true");
+    expect(listedFindings(panel)).toEqual(["Critical SQL injection src/users.ts:3"]);
+    expect(findingTitles(screen.getByRole("region", { name: "src/users.ts" }))).toEqual(["SQL injection"]);
+    const config = screen.getByRole("region", { name: "src/config.ts" });
+    expect(within(config).queryByRole("article")).not.toBeInTheDocument();
+    expect(within(config).getByRole("table", { name: "Diff of src/config.ts" })).toBeInTheDocument();
+    // The counts stay the Review's, whatever is hidden.
+    expect(filterButtons(panel, "Kind")).toEqual(["Security Issue 1", "Bad Practices 2"]);
+
+    await userEvent.click(securityIssues);
+
+    expect(securityIssues).toHaveAttribute("aria-pressed", "false");
+    expect(listedFindings(panel)).toHaveLength(3);
+    expect(findingsBeneath(config, 2)).toEqual(["Magic number"]);
+  });
+
+  test("filtering by Severity hides the Findings of the other Severities, and narrows the kind filter further", async () => {
+    const panel = await openPanel();
+    const severities = within(panel).getByRole("group", { name: "Severity" });
+    const users = screen.getByRole("region", { name: "src/users.ts" });
+    const config = screen.getByRole("region", { name: "src/config.ts" });
+
+    await userEvent.click(within(severities).getByRole("button", { name: /critical/i }));
+    await userEvent.click(within(severities).getByRole("button", { name: /low/i }));
+
+    expect(within(severities).getByRole("button", { name: /critical/i })).toHaveAttribute("aria-pressed", "true");
+    expect(within(severities).getByRole("button", { name: /medium/i })).toHaveAttribute("aria-pressed", "false");
+    expect(listedFindings(panel)).toEqual(["Critical SQL injection src/users.ts:3", "Low Magic number src/config.ts:1–2"]);
+    expect(findingTitles(users)).toEqual(["SQL injection"]);
+    expect(findingsBeneath(config, 2)).toEqual(["Magic number"]);
+    expect(filterButtons(panel, "Severity")).toEqual(["Critical 1", "High 0", "Medium 1", "Low 1"]);
+
+    await userEvent.click(within(panel).getByRole("button", { name: /bad practice/i }));
+
+    expect(listedFindings(panel)).toEqual(["Low Magic number src/config.ts:1–2"]);
+    expect(within(users).queryByRole("article")).not.toBeInTheDocument();
+    expect(findingsBeneath(config, 2)).toEqual(["Magic number"]);
+  });
+
+  test("when the filters hide every Finding, the panel says so", async () => {
+    const panel = await openPanel();
+
+    await userEvent.click(within(panel).getByRole("button", { name: /security issue/i }));
+    await userEvent.click(within(panel).getByRole("button", { name: /low/i }));
+
+    expect(within(panel).getByText("No Findings match the filters.")).toBeInTheDocument();
+    expect(within(panel).queryByRole("list")).not.toBeInTheDocument();
+    expect(screen.queryByRole("article")).not.toBeInTheDocument();
+  });
+
+  describe("jumping to a Finding", () => {
+    const scrollIntoView = Object.getOwnPropertyDescriptor(Element.prototype, "scrollIntoView");
+
+    afterEach(() => {
+      if (scrollIntoView) Object.defineProperty(Element.prototype, "scrollIntoView", scrollIntoView);
+      else delete (Element.prototype as Partial<Element>).scrollIntoView;
+    });
+
+    /** jsdom lays nothing out, so it scrolls nowhere: this gives the elements the page scrolls into view, in order. */
+    function stubScrolling() {
+      const scrolledTo: Element[] = [];
+      Element.prototype.scrollIntoView = function (this: Element) {
+        scrolledTo.push(this);
+      };
+      return scrolledTo;
+    }
+
+    /** The new line numbers of the diff's highlighted rows of code. */
+    function highlightedLines(file: HTMLElement) {
+      return codeRows(file)
+        .filter((row) => row.classList.contains("diff-highlighted"))
+        .map((row) => (row as HTMLTableRowElement).cells[1]?.textContent);
+    }
+
+    test("clicking a Finding in the panel scrolls the diff to its lines and highlights them", async () => {
+      const scrolledTo = stubScrolling();
+      const panel = await openPanel();
+      const users = screen.getByRole("region", { name: "src/users.ts" });
+      const config = screen.getByRole("region", { name: "src/config.ts" });
+      const swallowedError = within(panel).getByRole("button", { name: /swallowed error/i });
+      expect(highlightedLines(users)).toEqual([]);
+
+      await userEvent.click(swallowedError);
+
+      expect(scrolledTo).toEqual([newLineRow(users, 5)]);
+      expect(highlightedLines(users)).toEqual(["5", "6"]);
+      expect(swallowedError).toHaveAttribute("aria-current", "true");
+
+      await userEvent.click(within(panel).getByRole("button", { name: /magic number/i }));
+
+      expect(scrolledTo).toEqual([newLineRow(users, 5), newLineRow(config, 1)]);
+      expect(highlightedLines(config)).toEqual(["1", "2"]);
+      expect(highlightedLines(users)).toEqual([]);
+      expect(swallowedError).not.toHaveAttribute("aria-current");
+    });
+
+    test("clicking the same Finding again scrolls back to its lines", async () => {
+      const scrolledTo = stubScrolling();
+      const panel = await openPanel();
+      const users = screen.getByRole("region", { name: "src/users.ts" });
+
+      await userEvent.click(within(panel).getByRole("button", { name: /sql injection/i }));
+      await userEvent.click(within(panel).getByRole("button", { name: /sql injection/i }));
+
+      expect(scrolledTo).toEqual([newLineRow(users, 3), newLineRow(users, 3)]);
+      expect(highlightedLines(users)).toEqual(["3"]);
+    });
+
+    test("a Finding on lines the diff doesn't show is scrolled to itself", async () => {
+      const scrolledTo = stubScrolling();
+      const panel = await openPanel({
+        ...review,
+        fileOutcomes: [{ file: "src/config.ts", outcome: "reviewed", patch: configPatch }],
+        findings: [{ ...review.findings[1]!, startLine: 9, endLine: 9, title: "Past the end" }],
+      });
+      const config = screen.getByRole("region", { name: "src/config.ts" });
+
+      await userEvent.click(within(panel).getByRole("button", { name: /past the end/i }));
+
+      expect(scrolledTo).toHaveLength(1);
+      expect(scrolledTo[0]).toContainElement(within(config).getByRole("article"));
+      expect(scrolledTo[0]).not.toContainElement(within(config).getByRole("table"));
+      expect(highlightedLines(config)).toEqual([]);
+    });
+
+    test("the lines of a Finding the filters then hide are no longer highlighted", async () => {
+      stubScrolling();
+      const panel = await openPanel();
+      const users = screen.getByRole("region", { name: "src/users.ts" });
+      await userEvent.click(within(panel).getByRole("button", { name: /swallowed error/i }));
+      expect(highlightedLines(users)).toEqual(["5", "6"]);
+
+      await userEvent.click(within(panel).getByRole("button", { name: /security issue/i }));
+
+      expect(highlightedLines(users)).toEqual([]);
+    });
+  });
+});
+
 test.each([
   ["ends with a newline", `${configPatch}\n`],
   ["has Windows line endings", `${configPatch.replaceAll("\n", "\r\n")}\r\n`],
@@ -857,6 +1042,7 @@ test("a Review with no Findings says so", async () => {
   await startReview();
 
   expect(await screen.findByText(/no findings/i)).toBeInTheDocument();
+  expect(screen.queryByRole("complementary", { name: "Findings" })).not.toBeInTheDocument();
 });
 
 test("skipped and failed files show their outcome and reason instead of a diff, and flag coverage as incomplete", async () => {

@@ -202,6 +202,135 @@ a {
   margin: 0;
 }
 
+/* A Review's files, with the Findings panel beside them once the page is wide enough for both. */
+
+main:has(.review-layout) {
+  max-width: 1280px;
+}
+
+.review-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-6);
+  margin-top: var(--space-4);
+}
+
+.findings-panel {
+  padding: var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+@media (min-width: 960px) {
+  .review-layout:has(.findings-panel) {
+    grid-template-columns: 300px minmax(0, 1fr);
+    align-items: start;
+  }
+
+  /* Stays in view while the diff scrolls, and scrolls by itself when its Findings outgrow the window. */
+  .findings-panel {
+    position: sticky;
+    top: var(--space-4);
+    max-height: calc(100vh - 2 * var(--space-4));
+    box-sizing: border-box;
+    overflow-y: auto;
+  }
+}
+
+.findings-panel h3 {
+  margin: 0 0 var(--space-3);
+  font: var(--type-label);
+}
+
+.findings-panel .caption {
+  margin-top: var(--space-4);
+}
+
+.filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 28px;
+  padding: 0 var(--space-1) 0 var(--space-2);
+  font: var(--type-label);
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+/* A Severity brings its own inset. */
+.filter-chip:has(.dw-sev) {
+  padding-left: 2px;
+}
+
+.filter-chip:hover {
+  background: var(--surface-sunken);
+}
+
+/* The active filter is the selection, so it takes the accent. */
+.filter-chip[aria-pressed="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.finding-links {
+  list-style: none;
+  margin: var(--space-4) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.finding-link {
+  display: block;
+  width: 100%;
+  padding: var(--space-2);
+  font: inherit;
+  text-align: left;
+  color: var(--ink);
+  background: none;
+  border: 0;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.finding-link:hover {
+  background: var(--surface-sunken);
+}
+
+/* The Finding the diff was jumped to. */
+.finding-link[aria-current] {
+  background: var(--accent-soft);
+}
+
+.finding-link-title {
+  display: block;
+  margin-top: var(--space-1);
+  font: var(--type-label);
+}
+
+.finding-link-loc {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--ink-muted);
+  overflow-wrap: anywhere;
+}
+
 .file {
   display: flex;
   flex-direction: column;
@@ -285,6 +414,27 @@ a {
 
 .diff-removed .diff-marker {
   color: var(--diff-del);
+}
+
+/* The lines of the Finding jumped to: the accent on their line numbers, so the code keeps its added and removed tints. */
+.diff-highlighted .diff-num {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.diff-highlighted .diff-num:first-child {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.dw-finding.finding-jumped-to {
+  border-color: var(--accent);
+}
+
+/* A jump glides to its lines, unless the reader asked for less motion. */
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
 }
 
 .diff-finding td {
