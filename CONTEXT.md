@@ -19,7 +19,7 @@ A Review whose head commit is no longer the Pull Request's head commit, because 
 _Avoid_: Stale, expired
 
 **File Outcome**:
-What happened to one changed file within a Review: reviewed, skipped (excluded by the skip list or size limit, with a reason) or failed (the model could not produce a valid result). A Review with any skipped or failed files has incomplete coverage, and says so.
+What happened to one changed file within a Review: reviewed, skipped (excluded by the skip list or size limit, with a reason) or failed (the model could not produce a valid result). A Review with any skipped or failed files has incomplete coverage, and says so. While a Review runs, a file without its File Outcome yet is pending: queued (waiting its turn) or reviewing (with the Model now); it's settled once it has one.
 _Avoid_: File status, file result
 
 ### Findings

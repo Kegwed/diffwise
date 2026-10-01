@@ -454,7 +454,7 @@ describe("live progress while a Review runs", () => {
 
     const users = screen.getByRole("region", { name: "src/users.ts" });
     const config = screen.getByRole("region", { name: "src/config.ts" });
-    expect(within(users).getByText("Reviewing")).toHaveClass("dw-badge-accent");
+    expect(within(users).getByText("Reviewing")).toHaveClass("dw-badge-neutral");
     expect(within(config).getByText("Queued")).toHaveClass("dw-badge-outline");
     expect(screen.getByRole("status")).toHaveTextContent("Reviewing: 0 of 2 files done.");
     expect(screen.getByText("No Findings yet.")).toBeInTheDocument();
@@ -546,6 +546,32 @@ describe("live progress while a Review runs", () => {
     expect(findingsBeneath(config, 2)).toEqual(["Magic number"]);
   });
 
+  test("when the stream reconnects, the Review as it then stands replaces what the page had", async () => {
+    stubApi();
+    const progress = stubProgressStream();
+    await startReview();
+    const stream = await progress.followed();
+    stream.send(
+      { type: "review", review: running },
+      { type: "file-settled", fileOutcome: { file: "src/users.ts", outcome: "reviewed", patch: usersPatch }, findings: [sqlInjection] },
+    );
+
+    // The connection dropped, and the browser reconnected: the stream starts again from the Review.
+    stream.send({
+      type: "review",
+      review: {
+        ...running,
+        fileOutcomes: [{ file: "src/users.ts", outcome: "reviewed", patch: usersPatch }],
+        pendingFiles: [{ file: "src/config.ts", state: "reviewing" }],
+        findings: [sqlInjection],
+      },
+    });
+
+    expect(findingTitles(screen.getByRole("region", { name: "src/users.ts" }))).toEqual(["SQL injection"]);
+    expect(within(screen.getByRole("region", { name: "src/config.ts" })).getByText("Reviewing")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Reviewing: 1 of 2 files done.");
+  });
+
   test("leaving the Pull Request stops following the Review", async () => {
     stubApi();
     const progress = stubProgressStream();
@@ -560,7 +586,7 @@ describe("live progress while a Review runs", () => {
   });
 
   test("a Review that can't be followed says why", async () => {
-    const error = "Review review-1 not found. A Review that was still running when Diffwise restarted is lost.";
+    const error = "Review review-1 not found. A Review that was still running when Diffwise restarted is lost: start it again.";
     stubApi(review, modelListing, { "/api/reviews/review-1": () => Response.json({ error }, { status: 404 }) });
     const progress = stubProgressStream();
     window.location.hash = "#/acme/shop/pull/7/reviews/review-1";

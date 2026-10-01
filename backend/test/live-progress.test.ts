@@ -61,7 +61,7 @@ function setup(modelResponses: unknown[], db = openDatabase(":memory:")) {
 }
 
 describe("Live progress while a Review runs", () => {
-  test("starting a Review returns right away with its id, and the Review runs on the server", async () => {
+  test("starting a Review returns right away with its id, and the Review runs on the backend", async () => {
     const users = held({ findings: [sqlInjection] });
     const app = setup([users, { findings: [] }]);
 
@@ -164,6 +164,7 @@ describe("Live progress while a Review runs", () => {
 
     const reconnected = await followReview(app, id);
     const events = [await reconnected.next(), ...(await reconnected.rest())];
+    expect(events[0]).toEqual({ type: "review", review: expect.objectContaining({ id }) });
     expect(events.at(-1)).toEqual({ type: "complete" });
     expect(await fetchReview(app, id)).toMatchObject({
       status: "complete",

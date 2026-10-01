@@ -71,6 +71,7 @@ export function startReview(pullRequest: PullRequestRef, { modelProvider, model 
 export function followReview(id: string, onEvent: (event: ReviewEvent) => void, onLost: (reason: string) => void): () => void {
   const path = `/api/reviews/${encodeURIComponent(id)}`;
   const source = new EventSource(`${path}/events`);
+  let following = true;
   source.onmessage = (message) => {
     const event = JSON.parse(message.data) as ReviewEvent;
     // The stream ends at completion; left open, the browser would reconnect to it.
@@ -82,9 +83,12 @@ export function followReview(id: string, onEvent: (event: ReviewEvent) => void, 
     if (source.readyState !== EventSource.CLOSED) return;
     // The stream doesn't say what the error was; asking for the Review does.
     request<Review>(path).then(
-      () => onLost("Lost the connection to this Review's progress. Reload the page to follow it again."),
-      (error: Error) => onLost(error.message),
+      () => following && onLost("Lost the connection to this Review's progress. Reload the page to follow it again."),
+      (error: Error) => following && onLost(error.message),
     );
   };
-  return () => source.close();
+  return () => {
+    following = false;
+    source.close();
+  };
 }

@@ -48,8 +48,8 @@ export function ReviewView({ review }: { review: Review }) {
               <h3>
                 <code>{file}</code>
               </h3>
-              {/* Accent picks out the file the Model has now; the ones waiting stay quiet. */}
-              {pendingState && <Badge tone={pendingState === "reviewing" ? "accent" : "outline"}>{PENDING_LABELS[pendingState]}</Badge>}
+              {/* The file the Model has now stands out from the ones waiting, without a status colour: the words carry the meaning. */}
+              {pendingState && <Badge tone={pendingState === "reviewing" ? "neutral" : "outline"}>{PENDING_LABELS[pendingState]}</Badge>}
               {outcome && (
                 <Badge tone={outcome.outcome === "reviewed" ? "outline" : "neutral"}>{OUTCOME_LABELS[outcome.outcome]}</Badge>
               )}

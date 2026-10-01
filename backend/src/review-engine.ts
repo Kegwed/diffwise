@@ -84,13 +84,13 @@ export function startReview(
   };
   const followers = new Set<(event: ReviewEvent) => void>();
 
-  function progress(event: ReviewEvent) {
+  function publish(event: ReviewEvent) {
     review = applyReviewEvent(review, event);
     for (const follower of followers) follower(event);
   }
 
   function settle(fileOutcome: FileOutcome, findings: Finding[] = []) {
-    progress({ type: "file-settled", fileOutcome, findings });
+    publish({ type: "file-settled", fileOutcome, findings });
   }
 
   async function run(): Promise<Review> {
@@ -100,12 +100,15 @@ export function startReview(
         settle({ file: file.path, outcome: "skipped", reason });
         continue;
       }
-      progress({ type: "file-reviewing", file: file.path });
-      const result = await reviewFile(pullRequest, file, settings);
+      publish({ type: "file-reviewing", file: file.path });
+      // Whatever goes wrong with one file fails that file, so the Review always completes and its followers aren't left waiting.
+      const result = await reviewFile(pullRequest, file, settings).catch(
+        (error): FileReviewResult => ({ ok: false, reason: `Diffwise couldn't review it: ${(error as Error).message}` }),
+      );
       if (result.ok) settle({ file: file.path, outcome: "reviewed", patch: file.patch }, result.findings);
       else settle({ file: file.path, outcome: "failed", reason: result.reason });
     }
-    progress({ type: "complete" });
+    publish({ type: "complete" });
     return review;
   }
 
@@ -118,8 +121,9 @@ export function startReview(
       unsent.push(event);
       wake();
     };
+    const wakeOnAbort = () => wake();
     followers.add(follower);
-    signal?.addEventListener("abort", () => wake(), { once: true });
+    signal?.addEventListener("abort", wakeOnAbort);
     try {
       while (!signal?.aborted) {
         const event = unsent.shift();
@@ -132,6 +136,7 @@ export function startReview(
       }
     } finally {
       followers.delete(follower);
+      signal?.removeEventListener("abort", wakeOnAbort);
     }
   }
 

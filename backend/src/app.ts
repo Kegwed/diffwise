@@ -174,7 +174,7 @@ export function createApp({
   app.get("/api/reviews/:id/events", (c) => {
     const id = c.req.param("id");
     const follower = new AbortController();
-    const events = progress(id, follower.signal);
+    const events = progressStream(id, follower.signal);
     if (!events) return c.json<ApiError>({ error: reviewNotFound(id) }, 404);
     return streamSSE(c, async (stream) => {
       stream.onAbort(() => follower.abort());
@@ -183,7 +183,7 @@ export function createApp({
   });
 
   /** A Review's progress stream, until it completes or `signal` aborts: live if it's running, else as it was saved. */
-  function progress(id: string, signal: AbortSignal): AsyncIterable<ReviewEvent> | Iterable<ReviewEvent> | undefined {
+  function progressStream(id: string, signal: AbortSignal): AsyncIterable<ReviewEvent> | Iterable<ReviewEvent> | undefined {
     const run = running.get(id);
     if (run) return run.events(signal);
     const saved = getReview(db, id);
@@ -205,7 +205,7 @@ function detail({ owner, repo, number, title, author, headCommit, files }: PullR
 }
 
 function reviewNotFound(id: string): string {
-  return `Review ${id} not found. A Review that was still running when Diffwise restarted is lost.`;
+  return `Review ${id} not found. A Review that was still running when Diffwise restarted is lost: start it again.`;
 }
 
 /** `number` as asked for, which in a URL may not be a number at all. */
