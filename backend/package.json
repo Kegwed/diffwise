@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "start": "tsx src/main.ts",
+    "eval": "tsx src/eval/main.ts",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run"
   },

@@ -1,15 +1,14 @@
-import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
 import { createApp } from "./app.ts";
 import { openDatabase } from "./db.ts";
+import { loadEnvFile } from "./env-file.ts";
 import { withFixtures } from "./fixture-forge.ts";
 import { fileGitHubAppStore } from "./github-app.ts";
 import { githubForge } from "./github-forge.ts";
 import { modelProvidersFromEnv } from "./model-provider-config.ts";
 
-const envFile = fileURLToPath(new URL("../../.env", import.meta.url));
-if (existsSync(envFile)) process.loadEnvFile(envFile);
+loadEnvFile();
 
 const modelProviders = modelProvidersFromEnv(process.env);
 const port = Number(process.env.DIFFWISE_PORT ?? 3001);

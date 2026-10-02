@@ -62,6 +62,41 @@ Set these in `.env` at the repo root, or in the environment:
 
 API keys and the GitHub App's credentials stay on the backend: they are never sent to the browser or saved in the database.
 
+## Measuring a Model with the Eval Set
+
+The Eval Set tells you how well a Model reviews. It is five fixture Pull Requests seeded with sixteen Planted Problems: ten Security Issues (SQL injection, a hard-coded secret, command injection and others) and six Bad Practices (swallowed errors, an off-by-one loop and others). They live in `backend/src/eval/eval-set.ts`, each Planted Problem with its kind, file and line range.
+
+Run it against a Model with one command:
+
+```sh
+npm run eval -- --model qwen2.5-coder:7b
+```
+
+Add `--provider` to name the Model Provider when more than one is configured (see [Configuration](#configuration)), e.g. `--provider OpenAI-compatible --model gpt-4o`. Each fixture goes through the same Review as a real Pull Request, one Model call per changed file, so a run takes a few minutes on a local Model.
+
+A Planted Problem is **caught** if the Review reports a Finding of the same kind, in the same file, whose line range overlaps it, and **missed** otherwise. No model judges the matches, so the same Findings always score the same. The report lists each fixture's caught and missed Planted Problems and its unmatched Findings (the ones that matched no Planted Problem, which show how noisy the Model is), then the overall score. Here is a report with three of its fixtures left out:
+
+```
+Eval Set report for qwen2.5-coder:7b (Ollama)
+
+diffwise-eval/payments#1 Point the payment client at production: caught 2 of 3
+  caught     security-issue  src/payments/client.ts:4  Hard-coded live API key
+  caught     bad-practice    src/payments/client.ts:10-12  Swallowed error: a failed charge returns null with nothing logged or rethrown
+  missed     security-issue  src/payments/client.ts:7  Full card number written to the log
+
+diffwise-eval/uploads#1 Serve uploaded files and their thumbnails: caught 2 of 2
+  caught     security-issue  src/files.ts:9-10  Path traversal: the requested name can climb out of the uploads directory
+  caught     security-issue  src/files.ts:14  Command injection through the name interpolated into a shell command
+  unmatched  bad-practice    src/files.ts:14-16  Use of `exec` for external commands (medium)
+
+Caught 10 of 16 Planted Problems (63%): 5 of 10 Security Issues, 5 of 6 Bad Practices.
+4 Findings matched no Planted Problem.
+```
+
+A file the Model failed on is listed with the reason, and the Planted Problems in it count as missed. An unmatched Finding isn't necessarily wrong: it may be a real problem that wasn't planted.
+
+The Eval Set measures Models; it isn't a test suite. It never passes or fails, and `npm test` doesn't run it.
+
 ## Development
 
 ```sh
@@ -72,7 +107,7 @@ npm run typecheck   # all workspaces
 The workspace has three packages:
 
 - `shared`: the API contract types (Pull Request summary, Review, File Outcome, Finding, the progress events of a running Review), used by both sides.
-- `backend`: a Hono HTTP API. The Review Engine depends only on the `Forge` and `ModelProvider` ports. A started Review runs in the background, and `GET /api/reviews/:id/events` streams its progress as server-sent events. Tests drive the API with the fixture Forge, a scripted fake Model Provider and in-memory SQLite.
+- `backend`: a Hono HTTP API. The Review Engine depends only on the `Forge` and `ModelProvider` ports. A started Review runs in the background, and `GET /api/reviews/:id/events` streams its progress as server-sent events. Tests drive the API with the fixture Forge, a scripted fake Model Provider and in-memory SQLite. The Eval Set, its scoring and its command-line runner are in `backend/src/eval`.
 - `frontend`: React + Vite. Tests render the app with React Testing Library against fixture API responses.
 
 ### Checking the GitHub connection by hand
