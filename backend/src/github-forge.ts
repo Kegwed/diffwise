@@ -22,8 +22,8 @@ interface GitHubRepository {
 }
 
 /**
- * Reads repositories and Pull Requests from GitHub as Diffwise's GitHub App, using an installation token for each
- * repo's installation. Thin on purpose: it only translates GitHub's API, and is checked by hand (see README.md).
+ * Reads Repositories and Pull Requests from GitHub as Diffwise's GitHub App, using an installation token for each
+ * Repository's installation. Thin on purpose: it only translates GitHub's API, and is checked by hand (see README.md).
  */
 export function githubForge(loadCredentials: () => GitHubAppCredentials | undefined): Forge {
   const installationTokens = new Map<number, { token: string; expiresAt: number }>();
@@ -31,7 +31,7 @@ export function githubForge(loadCredentials: () => GitHubAppCredentials | undefi
   function requireCredentials(): GitHubAppCredentials {
     const credentials = loadCredentials();
     if (!credentials) {
-      throw new ForgeAccessError("Diffwise isn't connected to GitHub yet. Create its GitHub App first, then install it on the repo.");
+      throw new ForgeAccessError("Diffwise isn't connected to GitHub yet. Create its GitHub App first, then install it on the Repository.");
     }
     return credentials;
   }
@@ -49,15 +49,15 @@ export function githubForge(loadCredentials: () => GitHubAppCredentials | undefi
     return token;
   }
 
-  /** A token for the installation of the App on the repo, or a ForgeAccessError saying to install it there. */
+  /** A token for the installation of the App on the Repository, or a ForgeAccessError saying to install it there. */
   async function repositoryToken({ owner, repo }: RepositoryRef): Promise<string> {
     const credentials = requireCredentials();
     const jwt = appJwt(credentials);
     const installationResponse = await githubApi(`${repoPath({ owner, repo })}/installation`, { auth: jwt });
     if (installationResponse.status === 404) {
       throw new ForgeAccessError(
-        `The GitHub App ${credentials.name} isn't installed on ${owner}/${repo}, or that repo doesn't exist. ` +
-          `Install it on that repo at ${installUrl(credentials)}, then try again.`,
+        `The GitHub App ${credentials.name} isn't installed on ${owner}/${repo}, or that Repository doesn't exist. ` +
+          `Install it there at ${installUrl(credentials)}, then try again.`,
       );
     }
     const { id } = await json<{ id: number }>(installationResponse, `looking up the GitHub App's installation on ${owner}/${repo}`);
@@ -81,7 +81,7 @@ export function githubForge(loadCredentials: () => GitHubAppCredentials | undefi
         const installed = await listAll<GitHubRepository>(
           "/installation/repositories",
           await installationToken(jwt, id),
-          "listing the repositories the GitHub App is installed on",
+          "listing the Repositories the GitHub App is installed on",
           { itemsOf: (body) => (body as { repositories: GitHubRepository[] }).repositories },
         );
         repositories.push(...installed.map((repository) => ({ owner: repository.owner.login, repo: repository.name })));

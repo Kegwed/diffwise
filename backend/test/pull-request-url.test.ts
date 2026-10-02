@@ -64,7 +64,7 @@ describe("Resolving a Pull Request URL", () => {
     expect(error).toContain("https://github.com/owner/repo/pull/123");
   });
 
-  test("a repo the GitHub App isn't installed on is an error saying to install it there", async () => {
+  test("a Repository the GitHub App isn't installed on is an error saying to install it there", async () => {
     const response = await resolve(setup({ notInstalledOn: ["acme/shop"] }), "https://github.com/acme/shop/pull/7");
 
     expect(response.status).toBe(403);
@@ -73,7 +73,7 @@ describe("Resolving a Pull Request URL", () => {
     expect(error).toMatch(/install it/i);
   });
 
-  test("a Pull Request that doesn't exist in an installed repo is a 404", async () => {
+  test("a Pull Request that doesn't exist in a Repository the GitHub App is installed on is a 404", async () => {
     const response = await resolve(setup(), "https://github.com/acme/shop/pull/8");
 
     expect(response.status).toBe(404);
@@ -99,7 +99,7 @@ describe("Resolving a Pull Request URL", () => {
     expect(((await response.json()) as ApiError).error).toBe("GitHub replied 503 when fetching acme/shop#7: unavailable");
   });
 
-  test("starting a Review of a Pull Request in a repo the GitHub App isn't installed on is the same error", async () => {
+  test("starting a Review of a Pull Request in a Repository the GitHub App isn't installed on is the same error", async () => {
     const app = setup({ notInstalledOn: ["acme/shop"] });
 
     const response = await app.request("/api/reviews", {

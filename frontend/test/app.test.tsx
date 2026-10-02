@@ -227,7 +227,7 @@ async function startReview() {
 }
 
 describe("browsing to a Pull Request", () => {
-  test("the page lists the repositories the GitHub App is installed on", async () => {
+  test("the page lists the Repositories the GitHub App is installed on", async () => {
     stubApi();
     render(<App />);
 
@@ -235,7 +235,7 @@ describe("browsing to a Pull Request", () => {
     expect(screen.getByRole("link", { name: "acme/docs" })).toBeInTheDocument();
   });
 
-  test("when some repositories couldn't be listed, the page lists the rest and says why", async () => {
+  test("when some Repositories couldn't be listed, the page lists the rest and says why", async () => {
     const unlisted = "GitHub replied 401 when listing the GitHub App's installations: Bad credentials";
     stubApi(review, modelListing, {
       "/api/repositories": () => Response.json({ repositories: [{ owner: "diffwise-fixtures", repo: "bookshop" }], unlisted }),
@@ -246,7 +246,7 @@ describe("browsing to a Pull Request", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(unlisted);
   });
 
-  test("selecting a repository lists its open Pull Requests", async () => {
+  test("selecting a Repository lists its open Pull Requests", async () => {
     stubApi();
     render(<App />);
 
@@ -258,7 +258,7 @@ describe("browsing to a Pull Request", () => {
     expect(screen.queryByRole("link", { name: "acme/docs" })).not.toBeInTheDocument();
   });
 
-  test("a repository with no open Pull Requests says so", async () => {
+  test("a Repository with no open Pull Requests says so", async () => {
     stubApi(review, modelListing, { "/api/repositories/acme/docs/pull-requests": () => Response.json([]) });
     render(<App />);
 
@@ -267,8 +267,8 @@ describe("browsing to a Pull Request", () => {
     expect(await screen.findByText(/acme\/docs has no open pull requests/i)).toBeInTheDocument();
   });
 
-  test("a repository whose Pull Requests can't be listed shows why", async () => {
-    const error = "The GitHub App diffwise-a1b2c3 isn't installed on acme/docs. Install it on that repo, then try again.";
+  test("a Repository whose Pull Requests can't be listed shows why", async () => {
+    const error = "The GitHub App diffwise-a1b2c3 isn't installed on acme/docs. Install it there, then try again.";
     stubApi(review, modelListing, {
       "/api/repositories/acme/docs/pull-requests": () => Response.json({ error }, { status: 403 }),
     });
@@ -307,7 +307,7 @@ describe("browsing to a Pull Request", () => {
     expect(await screen.findByRole("region", { name: /review of acme\/shop#7/i })).toBeInTheDocument();
   });
 
-  test("the detail view leads back to its repository's Pull Requests, and to the repositories", async () => {
+  test("the detail view leads back to its Repository's Pull Requests, and to the Repositories", async () => {
     stubApi();
     await openPullRequest();
     const breadcrumb = screen.getByRole("navigation", { name: "Breadcrumb" });
@@ -1148,7 +1148,7 @@ describe("connecting to GitHub", () => {
     expect(screen.queryByRole("link", { name: /install/i })).not.toBeInTheDocument();
   });
 
-  test("once the GitHub App is created, the page says how to install it on repos", async () => {
+  test("once the GitHub App is created, the page says how to install it on Repositories", async () => {
     stubApi();
     render(<App />);
 
@@ -1179,8 +1179,8 @@ describe("opening a Pull Request by URL", () => {
 
   test.each([
     ["isn't a GitHub Pull Request URL", 400, `"nope" isn't a GitHub Pull Request URL. Paste one like https://github.com/owner/repo/pull/123`],
-    ["is in a repo the GitHub App isn't installed on", 403, "The GitHub App diffwise-a1b2c3 isn't installed on acme/shop. Install it on that repo, then try again."],
-  ])("pasting something that %s shows the error, and stays on the repositories", async (_, status, error) => {
+    ["is in a Repository the GitHub App isn't installed on", 403, "The GitHub App diffwise-a1b2c3 isn't installed on acme/shop. Install it there, then try again."],
+  ])("pasting something that %s shows the error, and stays on the Repositories", async (_, status, error) => {
     const pasted = status === 400 ? "nope" : url;
     stubApi(review, modelListing, { [byUrl(pasted)]: () => Response.json({ error }, { status }) });
     render(<App />);

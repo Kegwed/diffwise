@@ -5,10 +5,10 @@ export interface RepositoryRef {
   repo: string;
 }
 
-/** The repositories Diffwise can read Pull Requests from. */
+/** The Repositories Diffwise can read Pull Requests from. */
 export interface RepositoryListing {
   repositories: RepositoryRef[];
-  /** Why some repositories are missing from the listing, when they couldn't be listed (e.g. GitHub can't be reached). */
+  /** Why some Repositories are missing from the listing, when they couldn't be listed (e.g. GitHub can't be reached). */
   unlisted?: string;
 }
 
@@ -111,7 +111,7 @@ export type ModelProviderListing =
   | { modelProvider: string; status: "available"; models: string[] }
   | { modelProvider: string; status: "unavailable"; reason: string };
 
-/** Whether Diffwise's GitHub App has been created, and if so where to install it on repos. */
+/** Whether Diffwise's GitHub App has been created, and if so where to install it on Repositories. */
 export type GitHubAppStatus =
   | { status: "not-created" }
   | { status: "created"; name: string; htmlUrl: string; installUrl: string };

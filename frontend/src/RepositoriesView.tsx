@@ -4,7 +4,7 @@ import { PullRequestUrlForm } from "./PullRequestUrlForm.tsx";
 import { repositoryHref } from "./route.ts";
 import { useLoaded } from "./useLoaded.ts";
 
-/** The first view: the repositories the GitHub App is installed on, each leading to its open Pull Requests. */
+/** The first view: the Repositories the GitHub App is installed on, each leading to its open Pull Requests. */
 export function RepositoriesView() {
   const githubApp = useLoaded(getGitHubApp);
   const listing = useLoaded(listRepositories);
@@ -17,7 +17,7 @@ export function RepositoriesView() {
         <PullRequestUrlForm />
         {!listing.data && !listing.error && <p>Loading…</p>}
         {listing.data?.repositories.length === 0 && !listing.data.unlisted && (
-          <p>Diffwise can't read any repository yet. Install its GitHub App on one to see it here.</p>
+          <p>Diffwise can't read any Repository yet. Install its GitHub App on one to see it here.</p>
         )}
         <ul className="rows">
           {listing.data?.repositories.map((repository) => (
@@ -28,7 +28,7 @@ export function RepositoriesView() {
             </li>
           ))}
         </ul>
-        {listing.data?.unlisted && <p role="alert">Some repositories couldn't be listed. {listing.data.unlisted}</p>}
+        {listing.data?.unlisted && <p role="alert">Some Repositories couldn't be listed. {listing.data.unlisted}</p>}
         {(githubApp.error ?? listing.error) && <p role="alert">{githubApp.error ?? listing.error}</p>}
       </section>
     </>

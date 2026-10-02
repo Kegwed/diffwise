@@ -22,7 +22,7 @@ export function reviewHref(pullRequest: PullRequestRef, reviewId: string): strin
   return `${pullRequestHref(pullRequest)}/reviews/${encodeURIComponent(reviewId)}`;
 }
 
-/** Anything that isn't a repository's or a Pull Request's fragment is the first view, the repositories. */
+/** Anything that isn't a Repository's or a Pull Request's fragment is the first view, the Repositories. */
 export function parseRoute(hash: string): Route {
   const match = /^#\/([^/]+)\/([^/]+)(?:\/pull\/([1-9]\d*)(?:\/reviews\/([^/]+))?)?\/?$/.exec(hash);
   if (!match) return { view: "repositories" };

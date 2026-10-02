@@ -26,7 +26,7 @@ const MINIFIED = /[.-]min\.(js|mjs|cjs|css)$|\.(js|mjs|cjs|css)\.map$/i;
 /** Build output wherever it appears, e.g. in a monorepo package. */
 const BUILD_OUTPUT_DIRECTORIES = new Set(["dist", "node_modules", ".next", ".nuxt", ".svelte-kit", ".turbo", "__pycache__"]);
 
-/** Build output only at the repo root; deeper down these names are often real source (src/build/). */
+/** Build output only at the Repository's root; deeper down these names are often real source (src/build/). */
 const ROOT_BUILD_OUTPUT_DIRECTORIES = new Set(["build", "out", "target", "obj", "coverage"]);
 
 const BINARY_EXTENSIONS = new Set([

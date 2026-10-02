@@ -5,7 +5,7 @@ import { HeadCommit } from "./HeadCommit.tsx";
 import { pullRequestHref, REPOSITORIES_HREF } from "./route.ts";
 import { useLoaded } from "./useLoaded.ts";
 
-/** A repository's open Pull Requests, each leading to its detail view. */
+/** A Repository's open Pull Requests, each leading to its detail view. */
 export function RepositoryView({ repository }: { repository: RepositoryRef }) {
   const pullRequests = useLoaded(() => listOpenPullRequests(repository));
   const name = `${repository.owner}/${repository.repo}`;

@@ -50,8 +50,8 @@ function setup(options: Parameters<typeof fakeForge>[1] = {}) {
   });
 }
 
-describe("Browsing repositories", () => {
-  test("lists the repositories the GitHub App is installed on", async () => {
+describe("Browsing Repositories", () => {
+  test("lists the Repositories the GitHub App is installed on", async () => {
     const response = await setup().request("/api/repositories");
 
     expect(response.status).toBe(200);
@@ -63,7 +63,7 @@ describe("Browsing repositories", () => {
     });
   });
 
-  test("lists a repository's open Pull Requests, and no other repository's", async () => {
+  test("lists a Repository's open Pull Requests, and no other Repository's", async () => {
     const response = await setup().request("/api/repositories/acme/shop/pull-requests");
 
     expect(response.status).toBe(200);
@@ -73,7 +73,7 @@ describe("Browsing repositories", () => {
     ]);
   });
 
-  test("listing the Pull Requests of a repository the GitHub App isn't installed on is an error saying to install it there", async () => {
+  test("listing the Pull Requests of a Repository the GitHub App isn't installed on is an error saying to install it there", async () => {
     const response = await setup({ notInstalledOn: ["acme/shop"] }).request("/api/repositories/acme/shop/pull-requests");
 
     expect(response.status).toBe(403);
@@ -107,14 +107,14 @@ describe("A Pull Request's detail", () => {
     expect(await byUrl.json()).toEqual(await (await app.request("/api/repositories/acme/shop/pull-requests/7")).json());
   });
 
-  test.each(["8", "0", "7abc", "-7", "7.5"])("Pull Request number %j in an installed repository is a 404", async (number) => {
+  test.each(["8", "0", "7abc", "-7", "7.5"])("Pull Request number %j in a Repository the GitHub App is installed on is a 404", async (number) => {
     const response = await setup().request(`/api/repositories/acme/shop/pull-requests/${number}`);
 
     expect(response.status).toBe(404);
     expect(((await response.json()) as ApiError).error).toMatch(/not found/);
   });
 
-  test("a Pull Request in a repository the GitHub App isn't installed on is an error saying to install it there", async () => {
+  test("a Pull Request in a Repository the GitHub App isn't installed on is an error saying to install it there", async () => {
     const response = await setup({ notInstalledOn: ["acme/shop"] }).request("/api/repositories/acme/shop/pull-requests/7");
 
     expect(response.status).toBe(403);
@@ -127,7 +127,7 @@ describe("Browsing with the fixture Pull Requests alongside GitHub's", () => {
     return createApp({ forge: withFixtures(forge, [docsTypo]), modelProviders: [], db: openDatabase(":memory:") });
   }
 
-  test("the fixture repositories are listed before the ones the GitHub App is installed on", async () => {
+  test("the fixture Repositories are listed before the ones the GitHub App is installed on", async () => {
     const app = setupWithFixtures(fakeForge([userLookup, checkout]));
 
     expect(await (await app.request("/api/repositories")).json()).toEqual<RepositoryListing>({
@@ -138,7 +138,7 @@ describe("Browsing with the fixture Pull Requests alongside GitHub's", () => {
     });
   });
 
-  test("each repository lists its own open Pull Requests, fixture or not", async () => {
+  test("each Repository lists its own open Pull Requests, fixture or not", async () => {
     const app = setupWithFixtures(fakeForge([userLookup, checkout]));
 
     const fixture = (await (await app.request("/api/repositories/acme/docs/pull-requests")).json()) as PullRequestSummary[];
@@ -148,7 +148,7 @@ describe("Browsing with the fixture Pull Requests alongside GitHub's", () => {
     expect(installed.map((pr) => pr.title)).toEqual(["Add user lookup", "Speed up checkout"]);
   });
 
-  test("when GitHub's repositories can't be listed, the fixture ones still are, with the reason the rest are missing", async () => {
+  test("when GitHub's Repositories can't be listed, the fixture ones still are, with the reason the rest are missing", async () => {
     const app = setupWithFixtures({
       ...fakeForge([userLookup]),
       listRepositories: async () => {

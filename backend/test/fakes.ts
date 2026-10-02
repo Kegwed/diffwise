@@ -60,18 +60,18 @@ export function fakeModelProvider(
 }
 
 export interface FakeForgeOptions {
-  /** Repos, as "owner/repo", whose Pull Requests the GitHub App can't read because it isn't installed on them. */
+  /** Repositories, as "owner/repo", whose Pull Requests the GitHub App can't read because it isn't installed on them. */
   notInstalledOn?: string[];
 }
 
-/** Serves the given Pull Requests like the fixture Forge, except in repos the GitHub App isn't installed on. */
+/** Serves the given Pull Requests like the fixture Forge, except in Repositories the GitHub App isn't installed on. */
 export function fakeForge(pullRequests: PullRequestSnapshot[], { notInstalledOn = [] }: FakeForgeOptions = {}): Forge {
   const forge = fixtureForge(pullRequests);
   const installed = ({ owner, repo }: RepositoryRef) => !notInstalledOn.includes(`${owner}/${repo}`);
   function requireInstalled(repository: RepositoryRef) {
     if (installed(repository)) return;
     const { owner, repo } = repository;
-    throw new ForgeAccessError(`The GitHub App isn't installed on ${owner}/${repo}. Install it on that repo, then try again.`);
+    throw new ForgeAccessError(`The GitHub App isn't installed on ${owner}/${repo}. Install it there, then try again.`);
   }
   return {
     async listRepositories() {

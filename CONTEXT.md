@@ -6,8 +6,12 @@ Diffwise is an AI pull request reviewer: it reads a pull request's changes and r
 
 ### Reviewing
 
+**Repository**:
+A GitHub repository, named by its owner and name (`owner/repo`), that holds Pull Requests. Diffwise can read only the Repositories its GitHub App is installed on.
+_Avoid_: Repo (in prose), project
+
 **Pull Request**:
-A proposed set of code changes to a GitHub repository. The thing Diffwise reviews.
+A proposed set of code changes to a Repository. The thing Diffwise reviews.
 _Avoid_: PR (in prose), merge request, changeset
 
 **Review**:
