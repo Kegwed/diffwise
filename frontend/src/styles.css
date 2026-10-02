@@ -265,13 +265,6 @@ main:has(.findings-panel) {
   padding-left: 2px;
 }
 
-/* The active filter is the selection, so it takes the accent. */
-.filter-button[aria-pressed="true"] {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
 .finding-links {
   list-style: none;
   margin: var(--space-4) 0 0;

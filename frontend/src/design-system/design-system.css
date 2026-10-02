@@ -8,6 +8,7 @@
 .dw-btn-secondary:hover { background: var(--surface-sunken); }
 .dw-btn-ghost { background: transparent; border-color: transparent; color: var(--ink-muted); }
 .dw-btn-ghost:hover { background: var(--surface-sunken); color: var(--ink); }
+.dw-btn[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 .dw-btn:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus-ring); }
 .dw-btn:disabled { opacity: .5; cursor: not-allowed; }
 
