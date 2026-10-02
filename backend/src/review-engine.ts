@@ -95,18 +95,20 @@ export function startReview(
 
   async function run(): Promise<Review> {
     for (const file of pullRequest.files) {
-      const reason = skipReason(file);
-      if (reason) {
-        settle({ file: file.path, outcome: "skipped", reason });
-        continue;
-      }
-      publish({ type: "file-reviewing", file: file.path });
       // Whatever goes wrong with one file fails that file, so the Review always completes and its followers aren't left waiting.
-      const result = await reviewFile(pullRequest, file, settings).catch(
-        (error): FileReviewResult => ({ ok: false, reason: `Diffwise couldn't review it: ${(error as Error).message}` }),
-      );
-      if (result.ok) settle({ file: file.path, outcome: "reviewed", patch: file.patch }, result.findings);
-      else settle({ file: file.path, outcome: "failed", reason: result.reason });
+      try {
+        const reason = skipReason(file);
+        if (reason) {
+          settle({ file: file.path, outcome: "skipped", reason });
+          continue;
+        }
+        publish({ type: "file-reviewing", file: file.path });
+        const result = await reviewFile(pullRequest, file, settings);
+        if (result.ok) settle({ file: file.path, outcome: "reviewed", patch: file.patch }, result.findings);
+        else settle({ file: file.path, outcome: "failed", reason: result.reason });
+      } catch (error) {
+        settle({ file: file.path, outcome: "failed", reason: `Diffwise couldn't review it: ${(error as Error).message}` });
+      }
     }
     publish({ type: "complete" });
     return review;
