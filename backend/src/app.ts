@@ -3,7 +3,6 @@ import { streamSSE } from "hono/streaming";
 import { randomUUID } from "node:crypto";
 import type {
   ApiError,
-  FindingKind,
   GitHubAppStatus,
   ModelProviderListing,
   PullRequestDetail,
@@ -12,11 +11,10 @@ import type {
   RepositoryListing,
   RepositoryRef,
   Review,
-  ReviewEvent,
   ReviewSummary,
   StartReviewRequest,
 } from "@diffwise/shared";
-import { getReview, listReviewSummaries, saveReview, type Database } from "./db.ts";
+import type { Database } from "./db.ts";
 import { ForgeAccessError, type Forge, type PullRequestSnapshot } from "./forge.ts";
 import {
   appManifest,
@@ -29,7 +27,7 @@ import {
 } from "./github-app.ts";
 import type { ModelProvider } from "./model-provider.ts";
 import { parsePullRequestUrl } from "./pull-request-url.ts";
-import { startReview, type ReviewRun } from "./review-engine.ts";
+import { createReviews } from "./reviews.ts";
 
 export interface AppDependencies {
   forge: Forge;
@@ -57,8 +55,7 @@ export function createApp({
   const app = new Hono();
   /** The state each Manifest page sent to GitHub, so only GitHub's redirect back from one of them is accepted. */
   const manifestStates = new Set<string>();
-  /** The Reviews still running, by id. They live here until they're complete and saved, so a restart loses them. */
-  const running = new Map<string, ReviewRun>();
+  const reviews = createReviews({ forge, modelProviders, db, modelCallTimeoutMs });
 
   app.get("/api/github-app", (c) => {
     const credentials = githubAppStore.load();
@@ -128,27 +125,17 @@ export function createApp({
   });
 
   app.get("/api/repositories/:owner/:repo/pull-requests/:number", async (c) => {
-    const pullRequest = await pullRequestAt(c.req.param());
+    const ref = pullRequestAt(c.req.param());
+    const pullRequest = ref && (await forge.getPullRequest(ref));
     if (!pullRequest) return c.json<ApiError>({ error: pullRequestNotFound(c.req.param()) }, 404);
     return c.json<PullRequestDetail>(detail(pullRequest));
   });
 
-  /** The Pull Request a path names, if there is one. */
-  async function pullRequestAt({ owner, repo, number }: RepositoryRef & { number: string }): Promise<PullRequestSnapshot | undefined> {
-    // No Pull Request has a number that isn't a positive integer, so the Forge isn't asked.
-    return /^[1-9]\d*$/.test(number) ? forge.getPullRequest({ owner, repo, number: Number(number) }) : undefined;
-  }
-
   app.get("/api/repositories/:owner/:repo/pull-requests/:number/reviews", async (c) => {
-    const pullRequest = await pullRequestAt(c.req.param());
-    if (!pullRequest) return c.json<ApiError>({ error: pullRequestNotFound(c.req.param()) }, 404);
-    const unsaved = [...running.values()]
-      .map((run) => run.current())
-      .filter((review) => isSamePullRequest(review.pullRequest, pullRequest))
-      .map(summary);
-    const reviews = [...unsaved, ...listReviewSummaries(db, pullRequest)].sort(newestFirst);
-    // Outdated is worked out against the head commit as it is now, so it's never saved.
-    return c.json<ReviewSummary[]>(reviews.map((review) => ({ ...review, outdated: review.headCommit !== pullRequest.headCommit })));
+    const ref = pullRequestAt(c.req.param());
+    const listed = ref && (await reviews.list(ref));
+    if (!listed) return c.json<ApiError>({ error: pullRequestNotFound(c.req.param()) }, 404);
+    return c.json<ReviewSummary[]>(listed);
   });
 
   app.post("/api/reviews", async (c) => {
@@ -157,35 +144,21 @@ export function createApp({
     if (!ref || typeof ref.owner !== "string" || typeof ref.repo !== "string" || typeof ref.number !== "number") {
       return c.json<ApiError>({ error: "Expected { pullRequest: { owner, repo, number }, modelProvider, model }" }, 400);
     }
-    const modelProvider = modelProviders.find((provider) => provider.name === body?.modelProvider);
-    if (!modelProvider) {
-      return c.json<ApiError>({ error: `No Model Provider named ${JSON.stringify(body?.modelProvider)} is configured` }, 400);
-    }
-    const model = body?.model;
+    const { modelProvider, model } = body ?? {};
     if (typeof model !== "string" || model === "") {
       return c.json<ApiError>({ error: "Expected a Model to run the Review" }, 400);
     }
-    const pullRequest = await forge.getPullRequest(ref);
-    if (!pullRequest) {
-      return c.json<ApiError>({ error: pullRequestNotFound(ref) }, 404);
-    }
-    const run = startReview(pullRequest, model, modelProvider, { modelCallTimeoutMs });
-    const { id } = run.current();
-    running.set(id, run);
-    // Not awaited: the Review runs on, whether or not anyone follows it.
-    run.finished
-      .then((review) => {
-        saveReview(db, review);
-        running.delete(id);
-      })
-      // A Review that couldn't be saved stays here, so it can still be read until Diffwise restarts.
-      .catch((error) => console.error(`Review ${id} didn't complete, or wasn't saved:`, error));
-    return c.json<Review>(run.current(), 201);
+    // A Model Provider name that isn't a string names none of them, which the Reviews then report.
+    const outcome = await reviews.start(ref, { modelProvider: modelProvider as string, model });
+    if (outcome.started) return c.json<Review>(outcome.review, 201);
+    return outcome.missing === "model-provider"
+      ? c.json<ApiError>({ error: `No Model Provider named ${JSON.stringify(modelProvider)} is configured` }, 400)
+      : c.json<ApiError>({ error: pullRequestNotFound(ref) }, 404);
   });
 
   app.get("/api/reviews/:id", (c) => {
     const id = c.req.param("id");
-    const review = running.get(id)?.current() ?? getReview(db, id);
+    const review = reviews.get(id);
     if (!review) return c.json<ApiError>({ error: reviewNotFound(id) }, 404);
     return c.json<Review>(review);
   });
@@ -193,21 +166,13 @@ export function createApp({
   app.get("/api/reviews/:id/events", (c) => {
     const id = c.req.param("id");
     const follower = new AbortController();
-    const events = progressStream(id, follower.signal);
+    const events = reviews.follow(id, follower.signal);
     if (!events) return c.json<ApiError>({ error: reviewNotFound(id) }, 404);
     return streamSSE(c, async (stream) => {
       stream.onAbort(() => follower.abort());
       for await (const event of events) await stream.writeSSE({ data: JSON.stringify(event) });
     });
   });
-
-  /** A Review's progress stream, until it completes or `signal` aborts: live if it's running, else as it was saved. */
-  function progressStream(id: string, signal: AbortSignal): AsyncIterable<ReviewEvent> | Iterable<ReviewEvent> | undefined {
-    const run = running.get(id);
-    if (run) return run.events(signal);
-    const saved = getReview(db, id);
-    return saved && [{ type: "review", review: saved }, { type: "complete" }];
-  }
 
   app.onError((error, c) => {
     if (error instanceof ForgeAccessError) return c.json<ApiError>({ error: error.message }, 403);
@@ -223,26 +188,10 @@ function detail({ owner, repo, number, title, author, headCommit, files }: PullR
   return { owner, repo, number, title, author, headCommit, changedFiles: files.map((file) => file.path) };
 }
 
-function isSamePullRequest(a: PullRequestRef, b: PullRequestRef): boolean {
-  return a.owner === b.owner && a.repo === b.repo && a.number === b.number;
-}
-
-/** A Review that isn't saved (it's still running, mostly), as a list of Reviews shows it. */
-function summary({ id, modelProvider, model, headCommit, createdAt, status, findings }: Review): Omit<ReviewSummary, "outdated"> {
-  const count = (kind: FindingKind) => findings.filter((finding) => finding.kind === kind).length;
-  return {
-    id,
-    modelProvider,
-    model,
-    headCommit,
-    createdAt,
-    status,
-    findingCounts: { "bad-practice": count("bad-practice"), "security-issue": count("security-issue") },
-  };
-}
-
-function newestFirst(a: { createdAt: string }, b: { createdAt: string }): number {
-  return b.createdAt.localeCompare(a.createdAt);
+/** The Pull Request a path names, if its number could be one. */
+function pullRequestAt({ owner, repo, number }: RepositoryRef & { number: string }): PullRequestRef | undefined {
+  // No Pull Request has a number that isn't a positive integer, so the Forge isn't asked.
+  return /^[1-9]\d*$/.test(number) ? { owner, repo, number: Number(number) } : undefined;
 }
 
 function reviewNotFound(id: string): string {
