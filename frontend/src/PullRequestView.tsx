@@ -1,16 +1,16 @@
 import { useReducer, useState } from "react";
-import type { ModelChoice, PullRequestRef } from "@diffwise/shared";
+import { isOutdated, type ModelChoice, type PullRequestDetail, type PullRequestRef, type Review } from "@diffwise/shared";
 import { getPullRequest, listModels, listReviews, startReview } from "./api.ts";
 import { Breadcrumb } from "./Breadcrumb.tsx";
 import { Button } from "./design-system/index.ts";
 import { HeadCommit } from "./HeadCommit.tsx";
 import { firstModel, ModelPicker } from "./ModelPicker.tsx";
 import { ReviewList } from "./ReviewList.tsx";
-import { ReviewView } from "./ReviewView.tsx";
+import { ReviewView, type OutdatedCheck } from "./ReviewView.tsx";
 import { navigate, REPOSITORIES_HREF, repositoryHref, reviewHref } from "./route.ts";
 import { useCompletions } from "./useCompletions.ts";
 import { useFollowedReview } from "./useFollowedReview.ts";
-import { useLoaded } from "./useLoaded.ts";
+import { useLoaded, type Reloaded } from "./useLoaded.ts";
 
 /**
  * A Pull Request's detail view: what's about to be reviewed, the Model to review it with, and then the Review
@@ -89,10 +89,22 @@ export function PullRequestView({ pullRequest, reviewId }: { pullRequest: PullRe
       {opened && (
         <ReviewView
           review={opened}
-          outdated={reviews.data?.find((review) => review.id === reviewId)?.outdated}
+          outdated={outdatedCheck(opened, detail)}
           onReviewLatest={reviewing ? undefined : () => start(opened)}
         />
       )}
     </>
   );
+}
+
+/**
+ * Whether the opened Review is Outdated, told from the Pull Request as it was loaded when the Review was opened: its
+ * list of Reviews plays no part.
+ */
+function outdatedCheck(review: Review, detail: Reloaded<PullRequestDetail>): OutdatedCheck {
+  // What's kept from before the Review was opened may be of an earlier head commit than the Review's own.
+  if (detail.reloading) return "checking";
+  if (detail.error) return "unchecked";
+  if (!detail.data) return "checking";
+  return isOutdated(review, detail.data) ? "outdated" : "not-outdated";
 }

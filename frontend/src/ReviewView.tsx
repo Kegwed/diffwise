@@ -17,16 +17,22 @@ const PENDING_LABELS: Record<PendingFile["state"], string> = {
   reviewing: "Reviewing",
 };
 
+/**
+ * Whether the Pull Request's head commit has moved on since a Review ran: not known while the Pull Request is
+ * still loading ("checking"), and never once it couldn't be loaded ("unchecked").
+ */
+export type OutdatedCheck = "checking" | "outdated" | "not-outdated" | "unchecked";
+
 export interface ReviewViewProps {
   review: Review;
-  /** Whether the Pull Request's head commit has moved on since the Review ran. */
-  outdated?: boolean;
+  /** Whether the Review is Outdated, as far as that could be checked. */
+  outdated: OutdatedCheck;
   /** Starts a Review of the Pull Request's latest commit with this Review's Model; none while one can't be started. */
   onReviewLatest?: () => void;
 }
 
 /** A Review as it stands: complete, or still running with some of its files yet to settle. */
-export function ReviewView({ review, outdated = false, onReviewLatest }: ReviewViewProps) {
+export function ReviewView({ review, outdated, onReviewLatest }: ReviewViewProps) {
   const [filter, setFilter] = useState(NO_FILTER);
   const [jump, setJump] = useState<Jump>();
   const byFile = Map.groupBy(review.findings.toSorted(bySeverityThenLine), (finding) => finding.file);
@@ -47,7 +53,7 @@ export function ReviewView({ review, outdated = false, onReviewLatest }: ReviewV
       <p className="caption">
         {review.model} via {review.modelProvider} at <HeadCommit commit={review.headCommit} />
       </p>
-      {outdated && (
+      {outdated === "outdated" && (
         <div role="note" className="outdated-notice panel-sunken">
           <Badge>Outdated</Badge>
           <p>New commits were pushed to this Pull Request since this Review ran, so its Findings may no longer apply.</p>
@@ -55,6 +61,12 @@ export function ReviewView({ review, outdated = false, onReviewLatest }: ReviewV
             Review the latest commit
           </Button>
         </div>
+      )}
+      {outdated === "unchecked" && (
+        <p role="note" className="panel-sunken">
+          Diffwise couldn't check whether new commits were pushed to this Pull Request since this Review ran, so it may
+          be Outdated.
+        </p>
       )}
       {running && (
         <p role="status">

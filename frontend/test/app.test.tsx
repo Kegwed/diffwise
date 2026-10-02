@@ -739,6 +739,10 @@ describe("a Pull Request's Reviews", () => {
     const oldCommit = "0ld5678fed";
     const outdatedGpt: ReviewSummary = { ...gpt, headCommit: oldCommit, outdated: true };
     const byGpt: Review = { ...review, id: "review-2", headCommit: oldCommit, modelProvider: "OpenAI-compatible", model: "gpt-4o" };
+    /** A Review of a commit before `oldCommit`, Outdated even to a page opened before the new commits were pushed. */
+    const earlier: Review = { ...byGpt, headCommit: "f1r5t90abc" };
+    /** The Review of the latest commit that an Outdated one starts. */
+    const fresh: Review = { ...byGpt, id: "review-3", headCommit: pullRequest.headCommit };
 
     test("the Review is badged Outdated in the list and when opened, and the others aren't", async () => {
       stubApi(review, modelListing, { [REVIEWS]: () => Response.json([llama, outdatedGpt]) });
@@ -765,7 +769,6 @@ describe("a Pull Request's Reviews", () => {
     });
 
     test("one click on the Outdated Review starts a Review of the latest commit with the same Model", async () => {
-      const fresh: Review = { ...byGpt, id: "review-3", headCommit: pullRequest.headCommit };
       const fetch = stubApi(fresh, modelListing, { [REVIEWS]: () => Response.json([llama, outdatedGpt]) });
       stubProgressStream((url) => [
         { type: "review", review: url === "/api/reviews/review-3/events" ? fresh : byGpt },
@@ -789,16 +792,185 @@ describe("a Pull Request's Reviews", () => {
       );
     });
 
+    describe("whether the opened Review is Outdated comes from the Pull Request's head commit, not its list of Reviews", () => {
+      const listFails = () => Response.json({ error: "GitHub replied 503 when fetching acme/shop#7: unavailable" }, { status: 502 });
+
+      /** Opens the Review of the earlier head commit directly by its URL. */
+      async function openEarlierReview() {
+        stubProgressStream([{ type: "review", review: byGpt }, { type: "complete" }]);
+        window.location.hash = "#/acme/shop/pull/7/reviews/review-2";
+        render(<App />);
+        return screen.findByRole("region", { name: /review of acme\/shop#7/i });
+      }
+
+      test("the Review is Outdated, and can review the latest commit with its Model, when the Reviews couldn't be listed", async () => {
+        const fetch = stubApi(byGpt, modelListing, { [REVIEWS]: listFails });
+        const opened = await openEarlierReview();
+
+        await waitFor(() => expect(within(opened).getByText("Outdated")).toHaveClass("dw-badge-neutral"));
+        expect(opened).toHaveTextContent(/new commits were pushed/i);
+        await userEvent.click(within(opened).getByRole("button", { name: "Review the latest commit" }));
+
+        expect(fetch).toHaveBeenCalledWith(
+          "/api/reviews",
+          expect.objectContaining({
+            method: "POST",
+            body: JSON.stringify({ pullRequest: { owner: "acme", repo: "shop", number: 7 }, modelProvider: "OpenAI-compatible", model: "gpt-4o" }),
+          }),
+        );
+      });
+
+      test("the Review is Outdated as soon as it and the Pull Request have loaded, while the Reviews are still being listed", async () => {
+        stubApi(byGpt, modelListing, { [REVIEWS]: () => new Promise<Response>(() => {}) as never });
+        const opened = await openEarlierReview();
+
+        expect(await within(opened).findByText("Outdated")).toBeInTheDocument();
+        expect(within(opened).getByRole("button", { name: "Review the latest commit" })).toBeInTheDocument();
+        expect(screen.queryByRole("list", { name: "Reviews" })).not.toBeInTheDocument();
+      });
+
+      test("the Review stays Outdated when the Reviews were listed and then can't be listed again", async () => {
+        let list = () => Response.json([{ ...llama, status: "running" }, outdatedGpt]);
+        stubApi(byGpt, modelListing, { [REVIEWS]: () => list() });
+        const progress = stubProgressStream();
+        window.location.hash = "#/acme/shop/pull/7/reviews/review-2";
+        render(<App />);
+        (await progress.followed("review-2")).send({ type: "review", review: byGpt }, { type: "complete" });
+        const opened = await screen.findByRole("region", { name: /review of acme\/shop#7/i });
+        await screen.findByRole("list", { name: "Reviews" });
+
+        // The other Review completes, so the Reviews are listed again.
+        list = listFails;
+        (await progress.followed("review-1")).send({ type: "review", review: { ...review, status: "running" } }, { type: "complete" });
+
+        await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/GitHub replied 503/));
+        expect(screen.queryByRole("list", { name: "Reviews" })).not.toBeInTheDocument();
+        expect(within(opened).getByText("Outdated")).toBeInTheDocument();
+        expect(within(opened).getByRole("button", { name: "Review the latest commit" })).toBeInTheDocument();
+      });
+
+      test("a Review of the Pull Request's head commit isn't Outdated, whatever the list of Reviews says", async () => {
+        stubApi(review, modelListing, { [REVIEWS]: () => Response.json([{ ...llama, outdated: true }]) });
+        window.location.hash = "#/acme/shop/pull/7/reviews/review-1";
+        render(<App />);
+
+        const opened = await screen.findByRole("region", { name: /review of acme\/shop#7/i });
+        await waitFor(() => expect(within(reviewRow(/llama3\.1:8b/)).getByText("Outdated")).toBeInTheDocument());
+        await screen.findByRole("heading", { name: "Add user lookup" });
+        expect(within(opened).queryByText("Outdated")).not.toBeInTheDocument();
+        expect(within(opened).queryByRole("note")).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Review the latest commit" })).not.toBeInTheDocument();
+      });
+
+      test("a Review of the Pull Request's head commit isn't Outdated when the Reviews couldn't be listed", async () => {
+        stubApi(review, modelListing, { [REVIEWS]: listFails });
+        window.location.hash = "#/acme/shop/pull/7/reviews/review-1";
+        render(<App />);
+
+        const opened = await screen.findByRole("region", { name: /review of acme\/shop#7/i });
+        await screen.findByRole("heading", { name: "Add user lookup" });
+        await screen.findByRole("alert");
+        expect(within(opened).queryByRole("note")).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Review the latest commit" })).not.toBeInTheDocument();
+      });
+
+      test("the Review says it couldn't be checked, and may be Outdated, when the Pull Request couldn't be loaded", async () => {
+        const unreachable = () => Response.json({ error: "GitHub can't be reached: getaddrinfo ENOTFOUND api.github.com" }, { status: 502 });
+        stubApi(byGpt, modelListing, { "/api/repositories/acme/shop/pull-requests/7": unreachable, [REVIEWS]: unreachable });
+        const opened = await openEarlierReview();
+
+        expect(await within(opened).findByRole("note")).toHaveTextContent(
+          "Diffwise couldn't check whether new commits were pushed to this Pull Request since this Review ran, so it may be Outdated.",
+        );
+        expect(within(opened).queryByText("Outdated")).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Review the latest commit" })).not.toBeInTheDocument();
+        expect(screen.getByRole("alert")).toHaveTextContent(/GitHub can't be reached/);
+      });
+
+      test("the Review says nothing about Outdated while the Pull Request is still loading", async () => {
+        let load = (_: Response) => {};
+        const loading = new Promise<Response>((resolve) => (load = resolve));
+        stubApi(byGpt, modelListing, {
+          "/api/repositories/acme/shop/pull-requests/7": () => loading as never,
+          [REVIEWS]: () => Response.json([llama, outdatedGpt]),
+        });
+        const opened = await openEarlierReview();
+        await screen.findByRole("list", { name: "Reviews" });
+
+        expect(within(opened).queryByText("Outdated")).not.toBeInTheDocument();
+        expect(within(opened).queryByRole("note")).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Review the latest commit" })).not.toBeInTheDocument();
+
+        load(Response.json(pullRequestDetail));
+
+        expect(await within(opened).findByText("Outdated")).toBeInTheDocument();
+      });
+
+      test("a Review opened after the Pull Request couldn't be loaded says nothing about Outdated while it's loaded again", async () => {
+        let reload = (_: Response) => {};
+        let detail = (): Response | Promise<Response> => Response.json({ error: "GitHub can't be reached" }, { status: 502 });
+        stubApi(review, modelListing, {
+          "/api/repositories/acme/shop/pull-requests/7": () => detail() as never,
+          [REVIEWS]: () => Response.json([llama, outdatedGpt]),
+        });
+        stubProgressStream((url) => [
+          { type: "review", review: url === "/api/reviews/review-1/events" ? review : byGpt },
+          { type: "complete" },
+        ]);
+        window.location.hash = "#/acme/shop/pull/7/reviews/review-2";
+        render(<App />);
+        await within(await screen.findByRole("region", { name: /review of acme\/shop#7/i })).findByRole("note");
+
+        detail = () => new Promise<Response>((resolve) => (reload = resolve));
+        await userEvent.click(await screen.findByRole("link", { name: "llama3.1:8b via Ollama" }));
+
+        const opened = await screen.findByRole("region", { name: /review of acme\/shop#7/i });
+        expect(opened).toHaveTextContent(/llama3\.1:8b via Ollama at abc1234/);
+        expect(within(opened).queryByRole("note")).not.toBeInTheDocument();
+
+        reload(Response.json(pullRequestDetail));
+
+        await screen.findByRole("heading", { name: "Add user lookup" });
+        expect(within(opened).queryByRole("note")).not.toBeInTheDocument();
+        expect(within(opened).queryByText("Outdated")).not.toBeInTheDocument();
+      });
+
+      test("a Review just started of the latest commit says nothing about Outdated while the Pull Request is loaded again", async () => {
+        // The page was opened before the new commits were pushed, on a Review of a commit earlier still.
+        let reload = (_: Response) => {};
+        let detail = (): Response | Promise<Response> => Response.json({ ...pullRequestDetail, headCommit: oldCommit });
+        stubApi(fresh, modelListing, { "/api/repositories/acme/shop/pull-requests/7": () => detail() as never });
+        stubProgressStream((url) => [
+          { type: "review", review: url === "/api/reviews/review-3/events" ? fresh : earlier },
+          { type: "complete" },
+        ]);
+        window.location.hash = "#/acme/shop/pull/7/reviews/review-2";
+        render(<App />);
+
+        detail = () => new Promise<Response>((resolve) => (reload = resolve));
+        await userEvent.click(await screen.findByRole("button", { name: "Review the latest commit" }));
+
+        const opened = screen.getByRole("region", { name: /review of acme\/shop#7/i });
+        await waitFor(() => expect(opened).toHaveTextContent(/gpt-4o via OpenAI-compatible at abc1234/));
+        expect(within(opened).queryByText("Outdated")).not.toBeInTheDocument();
+        expect(within(opened).queryByRole("note")).not.toBeInTheDocument();
+
+        reload(Response.json(pullRequestDetail));
+
+        await waitFor(() => expect(screen.getByRole("region", { name: "Add user lookup" })).toHaveTextContent("by octocat at abc1234"));
+        expect(within(opened).queryByText("Outdated")).not.toBeInTheDocument();
+      });
+    });
+
     test("the Pull Request is shown as it is now once a Review of the latest commit is started", async () => {
-      // The page was opened before the new commits were pushed.
+      // The page was opened before the new commits were pushed, on a Review of a commit earlier still.
       let current: PullRequestDetail = { ...pullRequestDetail, headCommit: oldCommit };
-      const fresh: Review = { ...byGpt, id: "review-3", headCommit: pullRequest.headCommit };
       stubApi(fresh, modelListing, {
         "/api/repositories/acme/shop/pull-requests/7": () => Response.json(current),
-        [REVIEWS]: () => Response.json([outdatedGpt]),
+        [REVIEWS]: () => Response.json([{ ...outdatedGpt, headCommit: earlier.headCommit }]),
       });
       stubProgressStream((url) => [
-        { type: "review", review: url === "/api/reviews/review-3/events" ? fresh : byGpt },
+        { type: "review", review: url === "/api/reviews/review-3/events" ? fresh : earlier },
         { type: "complete" },
       ]);
       window.location.hash = "#/acme/shop/pull/7/reviews/review-2";

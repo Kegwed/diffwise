@@ -1,4 +1,4 @@
-import type { FindingKind, ModelChoice, PullRequestRef, Review, ReviewEvent, ReviewSummary } from "@diffwise/shared";
+import { isOutdated, type FindingKind, type ModelChoice, type PullRequestRef, type Review, type ReviewEvent, type ReviewSummary } from "@diffwise/shared";
 import { getReview, listReviewSummaries, saveReview, type Database } from "./db.ts";
 import type { Forge } from "./forge.ts";
 import type { ModelProvider } from "./model-provider.ts";
@@ -74,7 +74,7 @@ export function createReviews({ forge, modelProviders, db, modelCallTimeoutMs }:
         .map(summary);
       const reviews = [...unsaved, ...listReviewSummaries(db, pullRequest)].sort(newestFirst);
       // Outdated is worked out against the head commit as it is now, so it's never saved.
-      return reviews.map((review) => ({ ...review, outdated: review.headCommit !== pullRequest.headCommit }));
+      return reviews.map((review) => ({ ...review, outdated: isOutdated(review, pullRequest) }));
     },
 
     follow(id, signal) {

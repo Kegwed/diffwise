@@ -120,5 +120,6 @@ export interface ApiError {
   error: string;
 }
 
+export { isOutdated } from "./outdated.ts";
 export { DIFF_MARKERS, parsePatch, type DiffHunk, type DiffLine } from "./patch.ts";
 export { applyReviewEvent, type ReviewEvent } from "./review-events.ts";
