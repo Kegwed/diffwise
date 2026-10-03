@@ -170,4 +170,17 @@ describe("A Pull Request's Reviews", () => {
     expect(response.status).toBe(404);
     expect(((await response.json()) as ApiError).error).toBe(`Pull Request acme/shop#${number} not found`);
   });
+
+  test("the Reviews of a Pull Request in a Repository the GitHub App isn't installed on are a 403", async () => {
+    const app = createApp({
+      forge: fakeForge([pullRequest], { notInstalledOn: ["acme/shop"] }),
+      modelProviders: [],
+      db: openDatabase(":memory:"),
+    });
+
+    const response = await app.request("/api/repositories/acme/shop/pull-requests/7/reviews");
+
+    expect(response.status).toBe(403);
+    expect(((await response.json()) as ApiError).error).toMatch(/isn't installed on acme\/shop/);
+  });
 });

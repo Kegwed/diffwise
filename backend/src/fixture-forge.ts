@@ -1,3 +1,4 @@
+import type { PullRequestRef, PullRequestSummary } from "@diffwise/shared";
 import type { Forge, PullRequestSnapshot } from "./forge.ts";
 
 /** Pull Requests served without GitHub, so Diffwise can be tried before a GitHub App is set up. */
@@ -62,22 +63,28 @@ export const FIXTURE_PULL_REQUESTS: PullRequestSnapshot[] = [
 ];
 
 export function fixtureForge(pullRequests: PullRequestSnapshot[] = FIXTURE_PULL_REQUESTS): Forge {
+  const find = (ref: PullRequestRef) =>
+    pullRequests.find((pr) => pr.owner === ref.owner && pr.repo === ref.repo && pr.number === ref.number);
   return {
     async listRepositories() {
       const repositories = new Map(pullRequests.map(({ owner, repo }) => [`${owner}/${repo}`, { owner, repo }]));
       return { repositories: [...repositories.values()] };
     },
     async listOpenPullRequests(repository) {
-      return pullRequests
-        .filter((pr) => pr.owner === repository.owner && pr.repo === repository.repo)
-        .map(({ owner, repo, number, title, author, headCommit }) => ({ owner, repo, number, title, author, headCommit }));
+      return pullRequests.filter((pr) => pr.owner === repository.owner && pr.repo === repository.repo).map(summary);
     },
     async getPullRequest(ref) {
-      return pullRequests.find(
-        (pr) => pr.owner === ref.owner && pr.repo === ref.repo && pr.number === ref.number,
-      );
+      return find(ref);
+    },
+    async getPullRequestSummary(ref) {
+      const pullRequest = find(ref);
+      return pullRequest && summary(pullRequest);
     },
   };
+}
+
+function summary({ owner, repo, number, title, author, headCommit }: PullRequestSnapshot): PullRequestSummary {
+  return { owner, repo, number, title, author, headCommit };
 }
 
 /** Serves the fixture Pull Requests alongside `forge`'s, so they can still be tried once GitHub is connected. */
@@ -100,6 +107,9 @@ export function withFixtures(forge: Forge, pullRequests: PullRequestSnapshot[] =
     },
     async getPullRequest(ref) {
       return (await fixtures.getPullRequest(ref)) ?? forge.getPullRequest(ref);
+    },
+    async getPullRequestSummary(ref) {
+      return (await fixtures.getPullRequestSummary(ref)) ?? forge.getPullRequestSummary(ref);
     },
   };
 }

@@ -86,5 +86,9 @@ export function fakeForge(pullRequests: PullRequestSnapshot[], { notInstalledOn 
       requireInstalled(ref);
       return forge.getPullRequest(ref);
     },
+    async getPullRequestSummary(ref) {
+      requireInstalled(ref);
+      return forge.getPullRequestSummary(ref);
+    },
   };
 }

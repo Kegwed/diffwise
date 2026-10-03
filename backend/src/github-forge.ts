@@ -1,5 +1,5 @@
 import { createSign } from "node:crypto";
-import type { PullRequestSummary, RepositoryRef } from "@diffwise/shared";
+import type { PullRequestRef, PullRequestSummary, RepositoryRef } from "@diffwise/shared";
 import { ForgeAccessError, type Forge } from "./forge.ts";
 import { githubApi, githubJson as json, installUrl, type GitHubAppCredentials } from "./github-app.ts";
 
@@ -100,12 +100,10 @@ export function githubForge(loadCredentials: () => GitHubAppCredentials | undefi
 
     async getPullRequest(ref) {
       const token = await repositoryToken(ref);
-      const pullPath = `${repoPath(ref)}/pulls/${ref.number}`;
-      const pullResponse = await githubApi(pullPath, { auth: token });
-      if (pullResponse.status === 404) return undefined;
-      const pull = await json<GitHubPull>(pullResponse, `fetching ${ref.owner}/${ref.repo}#${ref.number}`);
+      const pull = await fetchPull(ref, token);
+      if (!pull) return undefined;
       const files = await listAll<{ filename: string; patch?: string }>(
-        `${pullPath}/files`,
+        `${pullPath(ref)}/files`,
         token,
         `listing the changed files of ${ref.owner}/${ref.repo}#${ref.number}`,
         { max: MAX_FILES },
@@ -117,7 +115,19 @@ export function githubForge(loadCredentials: () => GitHubAppCredentials | undefi
         files: files.map((file) => ({ path: file.filename, patch: file.patch ?? "" })),
       };
     },
+
+    async getPullRequestSummary(ref) {
+      const pull = await fetchPull(ref, await repositoryToken(ref));
+      return pull && summary(pull);
+    },
   };
+}
+
+/** The Pull Request as GitHub describes it, without its changed files; undefined if there's no such Pull Request. */
+async function fetchPull(ref: PullRequestRef, token: string): Promise<GitHubPull | undefined> {
+  const response = await githubApi(pullPath(ref), { auth: token });
+  if (response.status === 404) return undefined;
+  return json<GitHubPull>(response, `fetching ${ref.owner}/${ref.repo}#${ref.number}`);
 }
 
 function summary(pull: GitHubPull): PullRequestSummary {
@@ -154,6 +164,10 @@ async function listAll<T>(
 
 function repoPath({ owner, repo }: RepositoryRef): string {
   return `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+}
+
+function pullPath(ref: PullRequestRef): string {
+  return `${repoPath(ref)}/pulls/${ref.number}`;
 }
 
 /** A short-lived JSON Web Token that authenticates as the App itself, signed with its private key. */

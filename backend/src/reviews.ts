@@ -66,7 +66,7 @@ export function createReviews({ forge, modelProviders, db, modelCallTimeoutMs }:
     },
 
     async list(ref) {
-      const pullRequest = await forge.getPullRequest(ref);
+      const pullRequest = await forge.getPullRequestSummary(ref);
       if (!pullRequest) return undefined;
       const unsaved = [...running.values()]
         .map((run) => run.current())

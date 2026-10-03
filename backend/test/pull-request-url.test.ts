@@ -88,6 +88,9 @@ describe("Resolving a Pull Request URL", () => {
         getPullRequest: async () => {
           throw new Error("GitHub replied 503 when fetching acme/shop#7: unavailable");
         },
+        getPullRequestSummary: async () => {
+          throw new Error("GitHub replied 503 when fetching acme/shop#7: unavailable");
+        },
       },
       modelProviders: [],
       db: openDatabase(":memory:"),

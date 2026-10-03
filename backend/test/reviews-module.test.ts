@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { Review } from "@diffwise/shared";
 import { openDatabase } from "../src/db.ts";
-import type { PullRequestSnapshot } from "../src/forge.ts";
+import { ForgeAccessError, type Forge, type PullRequestSnapshot } from "../src/forge.ts";
 import { fixtureForge } from "../src/fixture-forge.ts";
 import { createReviews, type Reviews } from "../src/reviews.ts";
-import { fakeModelProvider, held } from "./fakes.ts";
+import { fakeForge, fakeModelProvider, held } from "./fakes.ts";
 
 const usersPatch = [
   "@@ -1,2 +1,4 @@",
@@ -36,9 +36,12 @@ const sqlInjection = {
 
 const modelChoice = { modelProvider: "Ollama", model: "test-model" };
 
-function setup(modelResponses: unknown[], { pullRequests = [pullRequest], db = openDatabase(":memory:") } = {}) {
+function setup(
+  modelResponses: unknown[],
+  { pullRequests = [pullRequest], db = openDatabase(":memory:"), forge = fixtureForge(pullRequests) as Forge } = {},
+) {
   const reviews = createReviews({
-    forge: fixtureForge(pullRequests),
+    forge,
     modelProviders: [fakeModelProvider(modelResponses).provider],
     db,
   });
@@ -121,5 +124,34 @@ describe("The Reviews module", () => {
 
     second.release();
     await completion(reviews, running.id);
+  });
+
+  test("listing a Pull Request's Reviews doesn't read its changed files", async () => {
+    const { reviews, db } = setup([{ findings: [sqlInjection] }]);
+    const saved = await start(reviews);
+    await completion(reviews, saved.id);
+    await vi.waitFor(() => expect(reviews.follow(saved.id)).toBeInstanceOf(Array));
+    const forge: Forge = {
+      ...fixtureForge([{ ...pullRequest, headCommit: "def5678" }]),
+      getPullRequest: async () => {
+        throw new Error("listing Reviews shouldn't read the Pull Request's changed files");
+      },
+    };
+
+    const listed = await setup([], { db, forge }).reviews.list(pullRequest);
+
+    expect(listed).toMatchObject([{ id: saved.id, headCommit: "abc1234", outdated: true }]);
+  });
+
+  test("the Reviews of a Pull Request that doesn't exist are undefined", async () => {
+    const { reviews } = setup([]);
+
+    expect(await reviews.list({ ...pullRequest, number: 8 })).toBeUndefined();
+  });
+
+  test("listing the Reviews of a Pull Request in a Repository the GitHub App isn't installed on throws a ForgeAccessError", async () => {
+    const { reviews } = setup([], { forge: fakeForge([pullRequest], { notInstalledOn: ["acme/shop"] }) });
+
+    await expect(reviews.list(pullRequest)).rejects.toThrow(ForgeAccessError);
   });
 });
