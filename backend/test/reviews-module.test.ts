@@ -149,6 +149,12 @@ describe("The Reviews module", () => {
     expect(await reviews.list({ ...pullRequest, number: 8 })).toBeUndefined();
   });
 
+  test("starting a Review of a Pull Request in a Repository the GitHub App isn't installed on throws a ForgeAccessError", async () => {
+    const { reviews } = setup([], { forge: fakeForge([pullRequest], { notInstalledOn: ["acme/shop"] }) });
+
+    await expect(reviews.start(pullRequest, modelChoice)).rejects.toThrow(ForgeAccessError);
+  });
+
   test("listing the Reviews of a Pull Request in a Repository the GitHub App isn't installed on throws a ForgeAccessError", async () => {
     const { reviews } = setup([], { forge: fakeForge([pullRequest], { notInstalledOn: ["acme/shop"] }) });
 

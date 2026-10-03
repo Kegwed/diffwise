@@ -7,6 +7,7 @@ import { withFixtures } from "./fixture-forge.ts";
 import { fileGitHubAppStore } from "./github-app.ts";
 import { githubForge } from "./github-forge.ts";
 import { modelProvidersFromEnv } from "./model-provider-config.ts";
+import { createReviews } from "./reviews.ts";
 
 loadEnvFile();
 
@@ -17,11 +18,17 @@ const githubAppStore = fileGitHubAppStore(
   process.env.DIFFWISE_GITHUB_APP ?? fileURLToPath(new URL("../../github-app.json", import.meta.url)),
 );
 
+const forge = withFixtures(githubForge(() => githubAppStore.load()));
+
 const app = createApp({
-  forge: withFixtures(githubForge(() => githubAppStore.load())),
+  forge,
   githubApp: { store: githubAppStore },
   modelProviders,
-  db: openDatabase(process.env.DIFFWISE_DB ?? fileURLToPath(new URL("../../diffwise.db", import.meta.url))),
+  reviews: createReviews({
+    forge,
+    modelProviders,
+    db: openDatabase(process.env.DIFFWISE_DB ?? fileURLToPath(new URL("../../diffwise.db", import.meta.url))),
+  }),
 });
 
 serve({ fetch: app.fetch, port }, () => {

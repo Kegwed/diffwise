@@ -3,9 +3,9 @@ import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, test } from "vitest";
 import type { ModelProviderListing } from "@diffwise/shared";
 import { createApp } from "../src/app.ts";
-import { openDatabase } from "../src/db.ts";
 import { fixtureForge } from "../src/fixture-forge.ts";
 import { modelProvidersFromEnv } from "../src/model-provider-config.ts";
+import { standInReviews } from "./fakes.ts";
 
 let server: Server | undefined;
 
@@ -23,7 +23,7 @@ async function serveModels(status: number, body: unknown) {
 }
 
 async function listModels(env: NodeJS.ProcessEnv): Promise<ModelProviderListing[]> {
-  const app = createApp({ forge: fixtureForge([]), modelProviders: modelProvidersFromEnv(env), db: openDatabase(":memory:") });
+  const app = createApp({ forge: fixtureForge([]), modelProviders: modelProvidersFromEnv(env), reviews: standInReviews() });
   return (await app.request("/api/models")).json() as Promise<ModelProviderListing[]>;
 }
 

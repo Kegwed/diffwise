@@ -1,9 +1,8 @@
 import { describe, expect, test } from "vitest";
 import type { GitHubAppStatus } from "@diffwise/shared";
 import { createApp } from "../src/app.ts";
-import { openDatabase } from "../src/db.ts";
 import { memoryGitHubAppStore, type GitHubAppCredentials } from "../src/github-app.ts";
-import { fakeForge, fakeModelProvider } from "./fakes.ts";
+import { fakeForge, fakeModelProvider, standInReviews } from "./fakes.ts";
 
 const credentials: GitHubAppCredentials = {
   id: 123,
@@ -21,7 +20,7 @@ function setup() {
   const app = createApp({
     forge: fakeForge([]),
     modelProviders: [fakeModelProvider([]).provider],
-    db: openDatabase(":memory:"),
+    reviews: standInReviews(),
     githubApp: {
       store,
       async convertManifestCode(code) {

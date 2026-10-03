@@ -14,7 +14,6 @@ import type {
   ReviewSummary,
   StartReviewRequest,
 } from "@diffwise/shared";
-import type { Database } from "./db.ts";
 import { ForgeAccessError, type Forge, type PullRequestSnapshot } from "./forge.ts";
 import {
   appManifest,
@@ -27,15 +26,14 @@ import {
 } from "./github-app.ts";
 import type { ModelProvider } from "./model-provider.ts";
 import { parsePullRequestUrl } from "./pull-request-url.ts";
-import { createReviews } from "./reviews.ts";
+import type { Reviews } from "./reviews.ts";
 
 export interface AppDependencies {
   forge: Forge;
   /** The configured Model Providers, in the order the Model listing shows them. */
   modelProviders: ModelProvider[];
-  db: Database;
-  /** How long to wait for one Model call before giving up on it; defaults to DEFAULT_MODEL_CALL_TIMEOUT_MS. */
-  modelCallTimeoutMs?: number;
+  /** Diffwise's Reviews, which the routes start, read, list and follow. */
+  reviews: Reviews;
   /** Where Diffwise's GitHub App credentials are saved, and how they're fetched from GitHub; defaults to nothing saved yet. */
   githubApp?: {
     store: GitHubAppStore;
@@ -46,8 +44,7 @@ export interface AppDependencies {
 export function createApp({
   forge,
   modelProviders,
-  db,
-  modelCallTimeoutMs,
+  reviews,
   githubApp: { store: githubAppStore, convertManifestCode: convertCode = convertManifestCode } = {
     store: memoryGitHubAppStore(),
   },
@@ -55,7 +52,6 @@ export function createApp({
   const app = new Hono();
   /** The state each Manifest page sent to GitHub, so only GitHub's redirect back from one of them is accepted. */
   const manifestStates = new Set<string>();
-  const reviews = createReviews({ forge, modelProviders, db, modelCallTimeoutMs });
 
   app.get("/api/github-app", (c) => {
     const credentials = githubAppStore.load();

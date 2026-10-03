@@ -1,10 +1,9 @@
 import { describe, expect, test } from "vitest";
 import type { ApiError, PullRequestDetail, PullRequestSummary, RepositoryListing } from "@diffwise/shared";
 import { createApp } from "../src/app.ts";
-import { openDatabase } from "../src/db.ts";
 import { withFixtures } from "../src/fixture-forge.ts";
 import type { Forge, PullRequestSnapshot } from "../src/forge.ts";
-import { fakeForge, fakeModelProvider } from "./fakes.ts";
+import { fakeForge, fakeModelProvider, standInReviews } from "./fakes.ts";
 
 const userLookup: PullRequestSnapshot = {
   owner: "acme",
@@ -46,7 +45,7 @@ function setup(options: Parameters<typeof fakeForge>[1] = {}) {
   return createApp({
     forge: fakeForge([userLookup, checkout, docsTypo], options),
     modelProviders: [fakeModelProvider([]).provider],
-    db: openDatabase(":memory:"),
+    reviews: standInReviews(),
   });
 }
 
@@ -124,7 +123,7 @@ describe("A Pull Request's detail", () => {
 
 describe("Browsing with the fixture Pull Requests alongside GitHub's", () => {
   function setupWithFixtures(forge: Forge) {
-    return createApp({ forge: withFixtures(forge, [docsTypo]), modelProviders: [], db: openDatabase(":memory:") });
+    return createApp({ forge: withFixtures(forge, [docsTypo]), modelProviders: [], reviews: standInReviews() });
   }
 
   test("the fixture Repositories are listed before the ones the GitHub App is installed on", async () => {

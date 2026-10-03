@@ -1,11 +1,11 @@
-import { describe, expect, test } from "vitest";
-import type { Review, ReviewEvent } from "@diffwise/shared";
-import { createApp } from "../src/app.ts";
+import { describe, expect, test, vi } from "vitest";
+import type { ReviewEvent } from "@diffwise/shared";
 import { openDatabase } from "../src/db.ts";
 import type { PullRequestSnapshot } from "../src/forge.ts";
 import { fixtureForge } from "../src/fixture-forge.ts";
+import { createReviews } from "../src/reviews.ts";
 import { fakeModelProvider, held } from "./fakes.ts";
-import { completedReview, fetchReview, followReview, startReview } from "./reviewing.ts";
+import { completedReview, followReview, startReview } from "./reviewing.ts";
 
 const usersPatch = [
   "@@ -1,2 +1,4 @@",
@@ -57,18 +57,16 @@ const configReviewed = { file: "src/config.ts", outcome: "reviewed", patch: conf
 
 function setup(modelResponses: unknown[], db = openDatabase(":memory:")) {
   const modelProvider = fakeModelProvider(modelResponses);
-  return createApp({ forge: fixtureForge([pullRequest]), modelProviders: [modelProvider.provider], db });
+  return createReviews({ forge: fixtureForge([pullRequest]), modelProviders: [modelProvider.provider], db });
 }
 
 describe("Live progress while a Review runs", () => {
   test("starting a Review returns right away with its id, and the Review runs on the backend", async () => {
     const users = held({ findings: [sqlInjection] });
-    const app = setup([users, { findings: [] }]);
+    const reviews = setup([users, { findings: [] }]);
 
-    const started = await startReview(app, pullRequest);
+    const running = await startReview(reviews, pullRequest);
 
-    expect(started.status).toBe(201);
-    const running = (await started.json()) as Review;
     expect(running).toMatchObject({
       id: expect.any(String),
       status: "running",
@@ -80,12 +78,12 @@ describe("Live progress while a Review runs", () => {
       ],
       findings: [],
     });
-    expect(await fetchReview(app, running.id)).toEqual(running);
+    expect(reviews.get(running.id)).toEqual(running);
 
     users.release();
-    await (await followReview(app, running.id)).rest();
+    await followReview(reviews, running.id).rest();
 
-    expect(await fetchReview(app, running.id)).toEqual({
+    expect(reviews.get(running.id)).toEqual({
       ...running,
       status: "complete",
       fileOutcomes: [usersReviewed, lockfileSkipped, configReviewed],
@@ -94,14 +92,13 @@ describe("Live progress while a Review runs", () => {
     });
   });
 
-  test("the progress stream sends each file's changes of state, and its Findings as it finishes, ending with completion", async () => {
+  test("following a Review sends each file's changes of state, and its Findings as it finishes, ending with completion", async () => {
     const users = held({ findings: [sqlInjection] });
-    const app = setup([users, "not JSON", "still not JSON"]);
-    const running = (await (await startReview(app, pullRequest)).json()) as Review;
+    const reviews = setup([users, "not JSON", "still not JSON"]);
+    const running = await startReview(reviews, pullRequest);
 
-    const stream = await followReview(app, running.id);
+    const stream = followReview(reviews, running.id);
 
-    expect(stream.response.headers.get("content-type")).toMatch(/^text\/event-stream/);
     expect(await stream.next()).toEqual<ReviewEvent>({ type: "review", review: running });
 
     users.release();
@@ -119,17 +116,17 @@ describe("Live progress while a Review runs", () => {
     ]);
   });
 
-  test("connecting to a Review mid-run first sends the Review as it stands, then continues live", async () => {
+  test("following a Review mid-run first sends the Review as it stands, then continues live", async () => {
     const users = held({ findings: [sqlInjection] });
     const config = held({ findings: [magicNumber] });
-    const app = setup([users, config]);
-    const { id } = (await (await startReview(app, pullRequest)).json()) as Review;
-    const first = await followReview(app, id);
+    const reviews = setup([users, config]);
+    const { id } = await startReview(reviews, pullRequest);
+    const first = followReview(reviews, id);
     users.release();
-    // The first client has seen the Review reach its last file.
+    // The first follower has seen the Review reach its last file.
     for (let event = await first.next(); event?.type !== "file-reviewing"; event = await first.next());
 
-    const second = await followReview(app, id);
+    const second = followReview(reviews, id);
 
     expect(await second.next()).toEqual({
       type: "review",
@@ -152,21 +149,22 @@ describe("Live progress while a Review runs", () => {
     expect(await first.rest()).toEqual(live);
   });
 
-  test("a Review keeps running after the client following it disconnects", async () => {
+  test("a Review keeps running after its follower stops following it", async () => {
     const users = held({ findings: [sqlInjection] });
-    const app = setup([users, { findings: [magicNumber] }]);
-    const { id } = (await (await startReview(app, pullRequest)).json()) as Review;
-    const stream = await followReview(app, id);
+    const reviews = setup([users, { findings: [magicNumber] }]);
+    const { id } = await startReview(reviews, pullRequest);
+    const stream = followReview(reviews, id);
     await stream.next();
 
-    await stream.disconnect();
+    stream.disconnect();
+    expect(await stream.next()).toBeUndefined();
     users.release();
 
-    const reconnected = await followReview(app, id);
+    const reconnected = followReview(reviews, id);
     const events = [await reconnected.next(), ...(await reconnected.rest())];
     expect(events[0]).toEqual({ type: "review", review: expect.objectContaining({ id }) });
     expect(events.at(-1)).toEqual({ type: "complete" });
-    expect(await fetchReview(app, id)).toMatchObject({
+    expect(reviews.get(id)).toMatchObject({
       status: "complete",
       fileOutcomes: [usersReviewed, lockfileSkipped, configReviewed],
       findings: [
@@ -176,19 +174,13 @@ describe("Live progress while a Review runs", () => {
     });
   });
 
-  test("a complete Review is saved, and its progress stream sends it, then completion", async () => {
+  test("a complete Review is saved, and following it sends it, then completion", async () => {
     const db = openDatabase(":memory:");
     const review = await completedReview(setup([{ findings: [sqlInjection] }, { findings: [] }], db), pullRequest);
     // Diffwise restarted: nothing is running, and the Review comes from the database.
     const restarted = setup([], db);
 
-    expect(await fetchReview(restarted, review.id)).toEqual(review);
-    expect(await (await followReview(restarted, review.id)).rest()).toEqual([{ type: "review", review }, { type: "complete" }]);
-  });
-
-  test("the progress stream of an unknown Review is a 404", async () => {
-    const app = setup([]);
-
-    expect((await app.request("/api/reviews/nope/events")).status).toBe(404);
+    await vi.waitFor(() => expect(restarted.get(review.id)).toEqual(review));
+    expect(await followReview(restarted, review.id).rest()).toEqual([{ type: "review", review }, { type: "complete" }]);
   });
 });

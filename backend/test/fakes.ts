@@ -2,6 +2,7 @@ import type { RepositoryRef } from "@diffwise/shared";
 import type { ChatRequest, ModelProvider } from "../src/model-provider.ts";
 import { fixtureForge } from "../src/fixture-forge.ts";
 import { ForgeAccessError, type Forge, type PullRequestSnapshot } from "../src/forge.ts";
+import type { Reviews } from "../src/reviews.ts";
 
 /** Scripts a Model call that never answers, until the request's signal aborts it. */
 export const hang = Symbol("hang");
@@ -90,5 +91,16 @@ export function fakeForge(pullRequests: PullRequestSnapshot[], { notInstalledOn 
       requireInstalled(ref);
       return forge.getPullRequestSummary(ref);
     },
+  };
+}
+
+/** Reviews that have nothing, except what a test gives them: for testing the routes without running any Review. */
+export function standInReviews(overrides: Partial<Reviews> = {}): Reviews {
+  return {
+    start: async () => ({ started: false, missing: "pull-request" }),
+    get: () => undefined,
+    list: async () => undefined,
+    follow: () => undefined,
+    ...overrides,
   };
 }

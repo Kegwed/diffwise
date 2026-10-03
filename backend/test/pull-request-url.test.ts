@@ -1,9 +1,8 @@
 import { describe, expect, test } from "vitest";
 import type { ApiError, PullRequestRef } from "@diffwise/shared";
 import { createApp } from "../src/app.ts";
-import { openDatabase } from "../src/db.ts";
 import type { PullRequestSnapshot } from "../src/forge.ts";
-import { fakeForge, fakeModelProvider } from "./fakes.ts";
+import { fakeForge, fakeModelProvider, standInReviews } from "./fakes.ts";
 
 const pullRequest: PullRequestSnapshot = {
   owner: "acme",
@@ -20,7 +19,7 @@ function setup(options: Parameters<typeof fakeForge>[1] = {}) {
   return createApp({
     forge: fakeForge([pullRequest], options),
     modelProviders: [fakeModelProvider([]).provider],
-    db: openDatabase(":memory:"),
+    reviews: standInReviews(),
   });
 }
 
@@ -93,25 +92,12 @@ describe("Resolving a Pull Request URL", () => {
         },
       },
       modelProviders: [],
-      db: openDatabase(":memory:"),
+      reviews: standInReviews(),
     });
 
     const response = await resolve(app, "https://github.com/acme/shop/pull/7");
 
     expect(response.status).toBe(500);
     expect(((await response.json()) as ApiError).error).toBe("GitHub replied 503 when fetching acme/shop#7: unavailable");
-  });
-
-  test("starting a Review of a Pull Request in a Repository the GitHub App isn't installed on is the same error", async () => {
-    const app = setup({ notInstalledOn: ["acme/shop"] });
-
-    const response = await app.request("/api/reviews", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ pullRequest: { owner: "acme", repo: "shop", number: 7 }, modelProvider: "Ollama", model: "test-model" }),
-    });
-
-    expect(response.status).toBe(403);
-    expect(((await response.json()) as ApiError).error).toMatch(/isn't installed on acme\/shop/);
   });
 });
