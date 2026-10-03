@@ -1,7 +1,7 @@
 import { isOutdated, type FindingKind, type ModelChoice, type PullRequestRef, type Review, type ReviewEvent, type ReviewSummary } from "@diffwise/shared";
 import { getReview, listReviewSummaries, saveReview, type Database } from "./db.ts";
 import type { Forge } from "./forge.ts";
-import type { ModelProvider } from "./model-provider.ts";
+import { modelUnavailable, type ModelProvider, type ModelUnavailable } from "./model-provider.ts";
 import { startReview, type ReviewRun } from "./review-engine.ts";
 
 export interface ReviewsDependencies {
@@ -13,8 +13,11 @@ export interface ReviewsDependencies {
   modelCallTimeoutMs?: number;
 }
 
-/** The Review that was started, or what there isn't that it needed. */
-export type StartOutcome = { started: true; review: Review } | { started: false; missing: "model-provider" | "pull-request" };
+/** The Review that was started, or why it wasn't: what there isn't that it needed, or a Model Provider that can't be used. */
+export type StartOutcome =
+  | { started: true; review: Review }
+  | { started: false; missing: "model-provider" | "pull-request" }
+  | ({ started: false } & ModelUnavailable);
 
 /**
  * Diffwise's Reviews: the ones still running, which a restart loses, and the complete ones, which are saved.
@@ -47,6 +50,8 @@ export function createReviews({ forge, modelProviders, db, modelCallTimeoutMs }:
       if (!modelProvider) return { started: false, missing: "model-provider" };
       const pullRequest = await forge.getPullRequest(ref);
       if (!pullRequest) return { started: false, missing: "pull-request" };
+      const unavailable = await modelUnavailable(modelProvider, model);
+      if (unavailable) return { started: false, ...unavailable };
       const run = startReview(pullRequest, model, modelProvider, { modelCallTimeoutMs });
       const { id } = run.current();
       running.set(id, run);

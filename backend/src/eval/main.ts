@@ -1,6 +1,7 @@
 import { parseArgs } from "node:util";
 import { loadEnvFile } from "../env-file.ts";
 import { modelProvidersFromEnv } from "../model-provider-config.ts";
+import { describeModelUnavailable, modelUnavailable } from "../model-provider.ts";
 import { EVAL_SET } from "./eval-set.ts";
 import { formatEvalReport, runEvalSet } from "./runner.ts";
 
@@ -43,12 +44,8 @@ if (!modelProvider) {
   );
 }
 
-// Asked up front, so a Model Provider that's down or a mistyped Model doesn't show up as every file failing.
-const models = await modelProvider.listModels().catch((error: Error) => fail(`${modelProvider.name} can't be used: ${error.message}`));
-// Ollama lists a Model pulled without a tag as "name:latest", and takes either name.
-if (!models.includes(model) && !models.includes(`${model}:latest`)) {
-  fail(`${modelProvider.name} doesn't offer a Model named "${model}". It offers: ${models.join(", ") || "none"}.`);
-}
+const unavailable = await modelUnavailable(modelProvider, model);
+if (unavailable) fail(describeModelUnavailable(modelProvider.name, model, unavailable));
 
 const report = await runEvalSet(EVAL_SET, modelProvider, model, {
   onFixtureStart: ({ pullRequest: { owner, repo, number } }) => console.error(`Reviewing ${owner}/${repo}#${number}...`),

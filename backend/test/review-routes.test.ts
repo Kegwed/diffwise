@@ -111,6 +111,30 @@ describe("Starting a Review", () => {
     expect(await errorOf(response)).toBe('No Model Provider named "Nope" is configured');
   });
 
+  test("with a Model the Model Provider doesn't list is a 400 naming the Models it does", async () => {
+    const app = setup(
+      standInReviews({ start: async () => ({ started: false, missing: "model", offeredModels: ["llama3.1:8b", "qwen2.5-coder:7b"] }) }),
+    );
+
+    const response = await postReview(app, { pullRequest: pullRequestRef, modelProvider: "Ollama", model: "llama3.1:7b" });
+
+    expect(response.status).toBe(400);
+    expect(await errorOf(response)).toBe(`Ollama doesn't offer a Model named "llama3.1:7b". It offers: llama3.1:8b, qwen2.5-coder:7b.`);
+  });
+
+  test("with a Model Provider that can't list its Models is a 502 with its reason", async () => {
+    const app = setup(
+      standInReviews({
+        start: async () => ({ started: false, unusable: "model-provider", reason: "connect ECONNREFUSED 127.0.0.1:11434" }),
+      }),
+    );
+
+    const response = await postReview(app, { pullRequest: pullRequestRef, modelProvider: "Ollama", model: "test-model" });
+
+    expect(response.status).toBe(502);
+    expect(await errorOf(response)).toBe("Ollama can't be used: connect ECONNREFUSED 127.0.0.1:11434");
+  });
+
   test("of a Pull Request that doesn't exist is a 404", async () => {
     const app = setup(standInReviews({ start: async () => ({ started: false, missing: "pull-request" }) }));
 

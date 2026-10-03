@@ -4,7 +4,7 @@ import { openDatabase } from "../src/db.ts";
 import { ForgeAccessError, type Forge, type PullRequestSnapshot } from "../src/forge.ts";
 import { fixtureForge } from "../src/fixture-forge.ts";
 import { createReviews, type Reviews } from "../src/reviews.ts";
-import { fakeForge, fakeModelProvider, held } from "./fakes.ts";
+import { fakeForge, fakeModelProvider, held, type FakeModelProviderOptions } from "./fakes.ts";
 
 const usersPatch = [
   "@@ -1,2 +1,4 @@",
@@ -38,19 +38,21 @@ const modelChoice = { modelProvider: "Ollama", model: "test-model" };
 
 function setup(
   modelResponses: unknown[],
-  { pullRequests = [pullRequest], db = openDatabase(":memory:"), forge = fixtureForge(pullRequests) as Forge } = {},
+  {
+    pullRequests = [pullRequest],
+    db = openDatabase(":memory:"),
+    forge = fixtureForge(pullRequests) as Forge,
+    models = undefined as FakeModelProviderOptions["models"],
+  } = {},
 ) {
-  const reviews = createReviews({
-    forge,
-    modelProviders: [fakeModelProvider(modelResponses).provider],
-    db,
-  });
-  return { reviews, db };
+  const modelProvider = fakeModelProvider(modelResponses, { models });
+  const reviews = createReviews({ forge, modelProviders: [modelProvider.provider], db });
+  return { reviews, db, modelRequests: modelProvider.requests };
 }
 
-async function start(reviews: Reviews, of: PullRequestSnapshot = pullRequest): Promise<Review> {
-  const outcome = await reviews.start(of, modelChoice);
-  if (!outcome.started) throw new Error(`The Review didn't start: no ${outcome.missing}`);
+async function start(reviews: Reviews, of: PullRequestSnapshot = pullRequest, choice = modelChoice): Promise<Review> {
+  const outcome = await reviews.start(of, choice);
+  if (!outcome.started) throw new Error(`The Review didn't start: ${JSON.stringify(outcome)}`);
   return outcome.review;
 }
 
@@ -64,6 +66,38 @@ afterEach(() => {
 });
 
 describe("The Reviews module", () => {
+  test("a Model its Model Provider lists only as `<model>:latest` starts a Review, which records the Model as named", async () => {
+    const { reviews, modelRequests } = setup([{ findings: [] }], { models: ["llama3.1:latest", "qwen2.5-coder:7b"] });
+
+    const review = await start(reviews, pullRequest, { modelProvider: "Ollama", model: "llama3.1" });
+
+    expect(review).toMatchObject({ modelProvider: "Ollama", model: "llama3.1" });
+    await completion(reviews, review.id);
+    expect(modelRequests.map((request) => request.model)).toEqual(["llama3.1"]);
+  });
+
+  test("a Model its Model Provider doesn't list starts no Review, and the outcome names the Models it does list", async () => {
+    const { reviews, modelRequests } = setup([{ findings: [] }], { models: ["llama3.1:8b", "qwen2.5-coder:7b"] });
+
+    const outcome = await reviews.start(pullRequest, { modelProvider: "Ollama", model: "llama3.1:7b" });
+
+    expect(outcome).toEqual({ started: false, missing: "model", offeredModels: ["llama3.1:8b", "qwen2.5-coder:7b"] });
+    expect(modelRequests).toHaveLength(0);
+    expect(await reviews.list(pullRequest)).toEqual([]);
+  });
+
+  test("a Model Provider that can't list its Models starts no Review, and the outcome carries its reason", async () => {
+    const { reviews, modelRequests } = setup([{ findings: [] }], {
+      models: new Error("connect ECONNREFUSED 127.0.0.1:11434"),
+    });
+
+    const outcome = await reviews.start(pullRequest, modelChoice);
+
+    expect(outcome).toEqual({ started: false, unusable: "model-provider", reason: "connect ECONNREFUSED 127.0.0.1:11434" });
+    expect(modelRequests).toHaveLength(0);
+    expect(await reviews.list(pullRequest)).toEqual([]);
+  });
+
   test("a changed file Diffwise can't handle fails that file, and the Review still completes and is saved", async () => {
     // No Forge sends a file without a patch: this stands for whatever could go wrong before the Model is asked.
     const broken = { path: "src/broken.ts", patch: undefined as unknown as string };

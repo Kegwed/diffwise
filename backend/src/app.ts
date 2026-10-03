@@ -24,7 +24,7 @@ import {
   type GitHubAppCredentials,
   type GitHubAppStore,
 } from "./github-app.ts";
-import type { ModelProvider } from "./model-provider.ts";
+import { describeModelUnavailable, type ModelProvider } from "./model-provider.ts";
 import { parsePullRequestUrl } from "./pull-request-url.ts";
 import type { Reviews } from "./reviews.ts";
 
@@ -147,9 +147,17 @@ export function createApp({
     // A Model Provider name that isn't a string names none of them, which the Reviews then report.
     const outcome = await reviews.start(ref, { modelProvider: modelProvider as string, model });
     if (outcome.started) return c.json<Review>(outcome.review, 201);
-    return outcome.missing === "model-provider"
-      ? c.json<ApiError>({ error: `No Model Provider named ${JSON.stringify(modelProvider)} is configured` }, 400)
-      : c.json<ApiError>({ error: pullRequestNotFound(ref) }, 404);
+    if ("unusable" in outcome) {
+      return c.json<ApiError>({ error: describeModelUnavailable(modelProvider as string, model, outcome) }, 502);
+    }
+    switch (outcome.missing) {
+      case "model-provider":
+        return c.json<ApiError>({ error: `No Model Provider named ${JSON.stringify(modelProvider)} is configured` }, 400);
+      case "model":
+        return c.json<ApiError>({ error: describeModelUnavailable(modelProvider as string, model, outcome) }, 400);
+      case "pull-request":
+        return c.json<ApiError>({ error: pullRequestNotFound(ref) }, 404);
+    }
   });
 
   app.get("/api/reviews/:id", (c) => {

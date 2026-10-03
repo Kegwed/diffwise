@@ -8,7 +8,7 @@ export async function startReview(
   { modelProvider = "Ollama", model = "test-model" }: Partial<ModelChoice> = {},
 ): Promise<Review> {
   const outcome = await reviews.start(pr, { modelProvider, model });
-  if (!outcome.started) throw new Error(`The Review didn't start: no ${outcome.missing}`);
+  if (!outcome.started) throw new Error(`The Review didn't start: ${JSON.stringify(outcome)}`);
   return outcome.review;
 }
 
