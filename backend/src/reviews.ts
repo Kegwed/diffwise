@@ -37,7 +37,7 @@ export interface Reviews {
    * The Review's progress until it completes or `signal` aborts: first the Review as it stands, then each change to
    * it, ending with its completion. Undefined if there's no such Review.
    */
-  follow(id: string, signal?: AbortSignal): AsyncIterable<ReviewEvent> | Iterable<ReviewEvent> | undefined;
+  follow(id: string, signal?: AbortSignal): AsyncIterable<ReviewEvent> | undefined;
 }
 
 export function createReviews({ forge, modelProviders, db, modelCallTimeoutMs }: ReviewsDependencies): Reviews {
@@ -86,9 +86,15 @@ export function createReviews({ forge, modelProviders, db, modelCallTimeoutMs }:
       const run = running.get(id);
       if (run) return run.events(signal);
       const saved = getReview(db, id);
-      return saved && [{ type: "review", review: saved }, { type: "complete" }];
+      return saved && completed(saved);
     },
   };
+}
+
+/** A saved Review's progress, which has nothing left to wait for: the Review, then its completion. */
+async function* completed(review: Review): AsyncGenerator<ReviewEvent> {
+  yield { type: "review", review };
+  yield { type: "complete" };
 }
 
 function isSamePullRequest(a: PullRequestRef, b: PullRequestRef): boolean {

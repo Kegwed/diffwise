@@ -122,6 +122,33 @@ describe("The Reviews module", () => {
     expect(setup([], { db }).reviews.get(id)).toEqual(review);
   });
 
+  test("a Review is saved by the time its followers see it complete", async () => {
+    expect.assertions(2);
+    const { reviews, db } = setup([{ findings: [sqlInjection] }]);
+    const { id } = await start(reviews);
+
+    for await (const event of reviews.follow(id, AbortSignal.timeout(1000))!) {
+      if (event.type !== "complete") continue;
+      // Diffwise restarted the moment the Review completed: it comes from the database.
+      const restarted = setup([], { db }).reviews;
+      expect(restarted.get(id)).toMatchObject({ status: "complete", findings: [{ title: "SQL injection" }] });
+      expect(await restarted.list(pullRequest)).toMatchObject([{ id, status: "complete" }]);
+    }
+  });
+
+  test("following a saved Review gives the Review and its completion, as following a running one ends", async () => {
+    const { reviews, db } = setup([{ findings: [sqlInjection] }]);
+    const { id } = await start(reviews);
+    await completion(reviews, id);
+
+    const followed = setup([], { db }).reviews.follow(id)!;
+
+    expect(Symbol.asyncIterator in followed).toBe(true);
+    const events = [];
+    for await (const event of followed) events.push(event);
+    expect(events).toMatchObject([{ type: "review", review: { id, status: "complete" } }, { type: "complete" }]);
+  });
+
   test("a complete Review that can't be saved can still be read and is listed, until Diffwise restarts", async () => {
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
     const { reviews, db } = setup([{ findings: [sqlInjection] }]);
@@ -145,7 +172,6 @@ describe("The Reviews module", () => {
     const { reviews } = setup([{ findings: [sqlInjection] }, second]);
     const saved = await start(reviews);
     await completion(reviews, saved.id);
-    await vi.waitFor(() => expect(reviews.follow(saved.id)).toBeInstanceOf(Array));
 
     const running = await start(reviews);
 
@@ -164,7 +190,6 @@ describe("The Reviews module", () => {
     const { reviews, db } = setup([{ findings: [sqlInjection] }]);
     const saved = await start(reviews);
     await completion(reviews, saved.id);
-    await vi.waitFor(() => expect(reviews.follow(saved.id)).toBeInstanceOf(Array));
     const forge: Forge = {
       ...fixtureForge([{ ...pullRequest, headCommit: "def5678" }]),
       getPullRequest: async () => {

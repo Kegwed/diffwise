@@ -212,7 +212,10 @@ describe("A Review's progress stream", () => {
       { type: "file-reviewing", file: "src/users.ts" },
       { type: "complete" },
     ];
-    const app = setup(standInReviews({ follow: (id) => (id === review.id ? events : undefined) }));
+    const followed = async function* () {
+      yield* events;
+    };
+    const app = setup(standInReviews({ follow: (id) => (id === review.id ? followed() : undefined) }));
 
     const stream = await readProgressStream(app, review.id);
 
