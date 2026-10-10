@@ -1,45 +1,19 @@
 import { describe, expect, test, vi } from "vitest";
 import type { ReviewEvent } from "@diffwise/shared";
-import { openDatabase } from "../src/db.ts";
 import type { PullRequestSnapshot } from "../src/forge.ts";
-import { fixtureForge } from "../src/fixture-forge.ts";
-import { createReviews } from "../src/reviews.ts";
-import { fakeModelProvider, held } from "./fakes.ts";
-import { completedReview, followReview, startReview } from "./reviewing.ts";
-
-const usersPatch = [
-  "@@ -1,2 +1,4 @@",
-  " import { db } from './db';",
-  "+export function findUser(name: string) {",
-  "+  return db.query(`SELECT * FROM users WHERE name = '${name}'`);",
-  "+}",
-].join("\n");
+import { held } from "./fakes.ts";
+import { completedReview, followReview, pullRequest as oneFile, setupReviews, sqlInjection, startReview, usersPatch } from "./reviewing.ts";
 
 const configPatch = "@@ -0,0 +1 @@\n+export const retries = 3;";
 
 /** Changes a file that will be reviewed, one on the skip list, and one more for the Model. */
 const pullRequest: PullRequestSnapshot = {
-  owner: "acme",
-  repo: "shop",
-  number: 7,
-  title: "Add user lookup",
-  author: "octocat",
-  headCommit: "abc1234",
-  description: "Adds an endpoint to look users up by name.",
+  ...oneFile,
   files: [
     { path: "src/users.ts", patch: usersPatch },
     { path: "package-lock.json", patch: '@@ -1 +1 @@\n-"a"\n+"b"' },
     { path: "src/config.ts", patch: configPatch },
   ],
-};
-
-const sqlInjection = {
-  kind: "security-issue",
-  severity: "critical",
-  startLine: 3,
-  endLine: 3,
-  title: "SQL injection",
-  explanation: "The name is interpolated straight into the SQL string.",
 };
 
 const magicNumber = {
@@ -55,15 +29,14 @@ const usersReviewed = { file: "src/users.ts", outcome: "reviewed", patch: usersP
 const lockfileSkipped = { file: "package-lock.json", outcome: "skipped", reason: expect.stringMatching(/lockfile/i) };
 const configReviewed = { file: "src/config.ts", outcome: "reviewed", patch: configPatch };
 
-function setup(modelResponses: unknown[], db = openDatabase(":memory:")) {
-  const modelProvider = fakeModelProvider(modelResponses);
-  return createReviews({ forge: fixtureForge([pullRequest]), modelProviders: [modelProvider.provider], db });
+function setup(modelResponses: unknown[]) {
+  return setupReviews(modelResponses, { pullRequests: [pullRequest] });
 }
 
 describe("Live progress while a Review runs", () => {
   test("starting a Review returns right away with its id, and the Review runs on the backend", async () => {
     const users = held({ findings: [sqlInjection] });
-    const reviews = setup([users, { findings: [] }]);
+    const { reviews } = setup([users, { findings: [] }]);
 
     const running = await startReview(reviews, pullRequest);
 
@@ -94,7 +67,7 @@ describe("Live progress while a Review runs", () => {
 
   test("following a Review sends each file's changes of state, and its Findings as it finishes, ending with completion", async () => {
     const users = held({ findings: [sqlInjection] });
-    const reviews = setup([users, "not JSON", "still not JSON"]);
+    const { reviews } = setup([users, "not JSON", "still not JSON"]);
     const running = await startReview(reviews, pullRequest);
 
     const stream = followReview(reviews, running.id);
@@ -119,7 +92,7 @@ describe("Live progress while a Review runs", () => {
   test("following a Review mid-run first sends the Review as it stands, then continues live", async () => {
     const users = held({ findings: [sqlInjection] });
     const config = held({ findings: [magicNumber] });
-    const reviews = setup([users, config]);
+    const { reviews } = setup([users, config]);
     const { id } = await startReview(reviews, pullRequest);
     const first = followReview(reviews, id);
     users.release();
@@ -151,7 +124,7 @@ describe("Live progress while a Review runs", () => {
 
   test("a Review keeps running after its follower stops following it", async () => {
     const users = held({ findings: [sqlInjection] });
-    const reviews = setup([users, { findings: [magicNumber] }]);
+    const { reviews } = setup([users, { findings: [magicNumber] }]);
     const { id } = await startReview(reviews, pullRequest);
     const stream = followReview(reviews, id);
     await stream.next();
@@ -174,13 +147,54 @@ describe("Live progress while a Review runs", () => {
     });
   });
 
-  test("a complete Review is saved, and following it sends it, then completion", async () => {
-    const db = openDatabase(":memory:");
-    const review = await completedReview(setup([{ findings: [sqlInjection] }, { findings: [] }], db), pullRequest);
-    // Diffwise restarted: nothing is running, and the Review comes from the database.
-    const restarted = setup([], db);
+});
 
-    await vi.waitFor(() => expect(restarted.get(review.id)).toEqual(review));
+describe("Saving a complete Review", () => {
+  test("a complete Review is saved, and following it sends it, then completion", async () => {
+    const { reviews, restart } = setup([{ findings: [sqlInjection] }, { findings: [] }]);
+    const review = await completedReview(reviews, pullRequest);
+
+    const restarted = restart();
+
+    expect(restarted.get(review.id)).toEqual(review);
     expect(await followReview(restarted, review.id).rest()).toEqual([{ type: "review", review }, { type: "complete" }]);
+  });
+
+  test("a Review is saved by the time its followers see it complete", async () => {
+    expect.assertions(2);
+    const { reviews, restart } = setup([{ findings: [sqlInjection] }, { findings: [] }]);
+    const { id } = await startReview(reviews, pullRequest);
+
+    for await (const event of reviews.follow(id, AbortSignal.timeout(1000))!) {
+      if (event.type !== "complete") continue;
+      // Diffwise restarted the moment the Review completed: it comes from the database.
+      const restarted = restart();
+      expect(restarted.get(id)).toMatchObject({ status: "complete", findings: [{ title: "SQL injection" }] });
+      expect(await restarted.list(pullRequest)).toMatchObject([{ id, status: "complete" }]);
+    }
+  });
+
+  test("following a saved Review gives its progress as following a running one does: asynchronously", async () => {
+    const { reviews, restart } = setup([{ findings: [sqlInjection] }, { findings: [] }]);
+    const { id } = await completedReview(reviews, pullRequest);
+
+    const followed = restart().follow(id)!;
+
+    expect(Symbol.asyncIterator in followed).toBe(true);
+  });
+
+  test("a complete Review that can't be saved can still be read and is listed, until Diffwise restarts", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { reviews, db, restart } = setup([{ findings: [sqlInjection] }, { findings: [] }]);
+    db.exec("CREATE TRIGGER disk_full BEFORE INSERT ON reviews BEGIN SELECT RAISE(ABORT, 'disk full'); END");
+
+    const { id } = await completedReview(reviews, pullRequest);
+    await vi.waitFor(() => expect(logged).toHaveBeenCalledWith(expect.stringContaining(id), expect.any(Error)));
+
+    expect(reviews.get(id)).toMatchObject({ status: "complete", findings: [{ title: "SQL injection" }] });
+    expect(await reviews.list(pullRequest)).toMatchObject([{ id, status: "complete" }]);
+    expect((await followReview(reviews, id).rest()).map((event) => event.type)).toEqual(["review", "complete"]);
+    expect(restart().get(id)).toBeUndefined();
+    logged.mockRestore();
   });
 });

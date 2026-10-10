@@ -1,5 +1,69 @@
 import type { ModelChoice, PullRequestRef, Review, ReviewEvent } from "@diffwise/shared";
-import type { Reviews } from "../src/reviews.ts";
+import { openDatabase, type Database } from "../src/db.ts";
+import { fixtureForge } from "../src/fixture-forge.ts";
+import type { Forge, PullRequestSnapshot } from "../src/forge.ts";
+import type { ModelProvider } from "../src/model-provider.ts";
+import { createReviews, type Reviews } from "../src/reviews.ts";
+import { fakeModelProvider, type FakeModelProviderOptions } from "./fakes.ts";
+
+export const usersPatch = [
+  "@@ -1,2 +1,4 @@",
+  " import { db } from './db';",
+  "+export function findUser(name: string) {",
+  "+  return db.query(`SELECT * FROM users WHERE name = '${name}'`);",
+  "+}",
+].join("\n");
+
+/** A Pull Request that changes one file, adding a SQL injection on line 3. */
+export const pullRequest: PullRequestSnapshot = {
+  owner: "acme",
+  repo: "shop",
+  number: 7,
+  title: "Add user lookup",
+  author: "octocat",
+  headCommit: "abc1234",
+  description: "Adds an endpoint to look users up by name.",
+  files: [{ path: "src/users.ts", patch: usersPatch }],
+};
+
+/** The Finding a Model should report in `pullRequest`, as the Model replies with it. */
+export const sqlInjection = {
+  kind: "security-issue",
+  severity: "critical",
+  startLine: 3,
+  endLine: 3,
+  title: "SQL injection",
+  explanation: "The name is interpolated straight into the SQL string.",
+  suggestedFix: "return db.query('SELECT * FROM users WHERE name = ?', [name]);",
+  securityReference: "CWE-89",
+};
+
+export interface ReviewsSetup {
+  /** The Pull Requests the fixture Forge serves; `pullRequest` unless given. */
+  pullRequests?: PullRequestSnapshot[];
+  /** The Forge, in place of a fixture Forge serving `pullRequests`. */
+  forge?: Forge;
+  /** The Model Providers, in place of one fake "Ollama" answering with `modelResponses`. */
+  modelProviders?: ModelProvider[];
+  /** The Models the fake Model Provider lists. */
+  models?: FakeModelProviderOptions["models"];
+  db?: Database;
+  modelCallTimeoutMs?: number;
+}
+
+/**
+ * Diffwise's Reviews over an in-memory database, with a fake Model Provider answering each Model call with the next of
+ * `modelResponses` (see fakeModelProvider). `restart()` gives the Reviews of Diffwise restarted on the same database.
+ */
+export function setupReviews(
+  modelResponses: unknown[] = [],
+  { pullRequests = [pullRequest], forge = fixtureForge(pullRequests), modelProviders, models, db = openDatabase(":memory:"), modelCallTimeoutMs }: ReviewsSetup = {},
+) {
+  const modelProvider = fakeModelProvider(modelResponses, { models });
+  const reviews = createReviews({ forge, modelProviders: modelProviders ?? [modelProvider.provider], db, modelCallTimeoutMs });
+  const restart = () => createReviews({ forge, modelProviders: [], db });
+  return { reviews, db, modelRequests: modelProvider.requests, restart };
+}
 
 /** Starts a Review, failing the test if it doesn't start; resolves with the Review as it stands once started. */
 export async function startReview(

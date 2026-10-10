@@ -1,42 +1,11 @@
 import { describe, expect, test } from "vitest";
 import type { ReviewSummary } from "@diffwise/shared";
-import { openDatabase } from "../src/db.ts";
-import type { PullRequestSnapshot } from "../src/forge.ts";
+import { ForgeAccessError, type Forge, type PullRequestSnapshot } from "../src/forge.ts";
+import { fixtureForge } from "../src/fixture-forge.ts";
 import type { ModelProvider } from "../src/model-provider.ts";
-import { createReviews, type Reviews } from "../src/reviews.ts";
+import type { Reviews } from "../src/reviews.ts";
 import { fakeForge, fakeModelProvider, held } from "./fakes.ts";
-import { completedReview, followReview, startReview } from "./reviewing.ts";
-
-const pullRequest: PullRequestSnapshot = {
-  owner: "acme",
-  repo: "shop",
-  number: 7,
-  title: "Add user lookup",
-  author: "octocat",
-  headCommit: "abc1234",
-  description: "Adds an endpoint to look users up by name.",
-  files: [
-    {
-      path: "src/users.ts",
-      patch: [
-        "@@ -1,2 +1,4 @@",
-        " import { db } from './db';",
-        "+export function findUser(name: string) {",
-        "+  return db.query(`SELECT * FROM users WHERE name = '${name}'`);",
-        "+}",
-      ].join("\n"),
-    },
-  ],
-};
-
-const sqlInjection = {
-  kind: "security-issue",
-  severity: "critical",
-  startLine: 3,
-  endLine: 3,
-  title: "SQL injection",
-  explanation: "The name is interpolated straight into the SQL string.",
-};
+import { completedReview, followReview, pullRequest, setupReviews, sqlInjection, startReview } from "./reviewing.ts";
 
 const vagueName = {
   kind: "bad-practice",
@@ -49,7 +18,7 @@ const vagueName = {
 
 function setup(modelProviders: ModelProvider[], others: PullRequestSnapshot[] = []) {
   const pullRequests = [pullRequest, ...others];
-  const reviews = createReviews({ forge: fakeForge(pullRequests), modelProviders, db: openDatabase(":memory:") });
+  const { reviews } = setupReviews([], { forge: fakeForge(pullRequests), modelProviders });
   /** Moves the Pull Request's head commit on, as pushing new commits to it does. The fake Forge serves `pullRequests` as it then is. */
   const push = (headCommit: string) => void (pullRequests[0] = { ...pullRequest, headCommit });
   return { reviews, push };
@@ -158,5 +127,66 @@ describe("A Pull Request's Reviews", () => {
     await stream.rest();
 
     expect(await listReviews(reviews, 8)).toMatchObject([{ id, status: "complete" }]);
+  });
+
+  test("a running Review and a saved one are listed alike, newest first", async () => {
+    const second = held({ findings: [] });
+    const { reviews } = setup([fakeModelProvider([{ findings: [sqlInjection] }, second]).provider]);
+    const saved = await completedReview(reviews, pullRequest);
+
+    const running = await startReview(reviews, pullRequest);
+
+    expect(await listReviews(reviews)).toEqual<ReviewSummary[]>([
+      {
+        id: running.id,
+        modelProvider: "Ollama",
+        model: "test-model",
+        headCommit: "abc1234",
+        createdAt: running.createdAt,
+        status: "running",
+        findingCounts: { "bad-practice": 0, "security-issue": 0 },
+        outdated: false,
+      },
+      {
+        id: saved.id,
+        modelProvider: "Ollama",
+        model: "test-model",
+        headCommit: "abc1234",
+        createdAt: saved.createdAt,
+        status: "complete",
+        findingCounts: { "bad-practice": 0, "security-issue": 1 },
+        outdated: false,
+      },
+    ]);
+
+    second.release();
+    await followReview(reviews, running.id).rest();
+  });
+
+  test("are listed without reading the Pull Request's changed files", async () => {
+    const { reviews, db } = setupReviews([{ findings: [sqlInjection] }]);
+    const saved = await completedReview(reviews, pullRequest);
+    const forge: Forge = {
+      ...fixtureForge([{ ...pullRequest, headCommit: "def5678" }]),
+      getPullRequest: async () => {
+        throw new Error("listing Reviews shouldn't read the Pull Request's changed files");
+      },
+    };
+
+    const listed = await setupReviews([], { db, forge }).reviews.list(pullRequest);
+
+    expect(listed).toMatchObject([{ id: saved.id, headCommit: "abc1234", outdated: true }]);
+  });
+
+  test("of a Pull Request that doesn't exist are undefined", async () => {
+    const { reviews } = setup([]);
+
+    expect(await reviews.list({ ...pullRequest, number: 8 })).toBeUndefined();
+  });
+
+  test("of a Pull Request in a Repository the GitHub App isn't installed on throw a ForgeAccessError", async () => {
+    const { reviews } = setupReviews([], { forge: fakeForge([pullRequest], { notInstalledOn: ["acme/shop"] }) });
+
+    await expect(reviews.list(pullRequest)).rejects.toThrow(ForgeAccessError);
   });
 });

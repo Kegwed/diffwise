@@ -5,65 +5,18 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, expect, test } from "vitest";
 import type { ModelChoice } from "@diffwise/shared";
 import { openDatabase } from "../src/db.ts";
-import type { PullRequestSnapshot } from "../src/forge.ts";
-import { fixtureForge } from "../src/fixture-forge.ts";
-import type { ModelProvider } from "../src/model-provider.ts";
-import { createReviews } from "../src/reviews.ts";
-import { fakeModelProvider, hang } from "./fakes.ts";
-import { completedReview } from "./reviewing.ts";
-
-const pullRequest: PullRequestSnapshot = {
-  owner: "acme",
-  repo: "shop",
-  number: 7,
-  title: "Add user lookup",
-  author: "octocat",
-  headCommit: "abc1234",
-  description: "Adds an endpoint to look users up by name.",
-  files: [
-    {
-      path: "src/users.ts",
-      patch: [
-        "@@ -1,2 +1,4 @@",
-        " import { db } from './db';",
-        "+export function findUser(name: string) {",
-        "+  return db.query(`SELECT * FROM users WHERE name = '${name}'`);",
-        "+}",
-      ].join("\n"),
-    },
-  ],
-};
-
-const sqlInjection = {
-  kind: "security-issue",
-  severity: "critical",
-  startLine: 3,
-  endLine: 3,
-  title: "SQL injection",
-  explanation: "The name is interpolated straight into the SQL string.",
-  suggestedFix: "return db.query('SELECT * FROM users WHERE name = ?', [name]);",
-  securityReference: "CWE-89",
-};
+import { ForgeAccessError, type PullRequestSnapshot } from "../src/forge.ts";
+import { fakeForge, fakeModelProvider, hang } from "./fakes.ts";
+import { completedReview, pullRequest, setupReviews, sqlInjection } from "./reviewing.ts";
 
 /** A reviewed File Outcome, whatever its patch. */
 function reviewed(file: string) {
   return { file, outcome: "reviewed", patch: expect.any(String) };
 }
 
-function setup(pullRequests: PullRequestSnapshot[], modelResponses: unknown[], modelCallTimeoutMs?: number) {
-  const modelProvider = fakeModelProvider(modelResponses);
-  const reviews = createReviews({
-    forge: fixtureForge(pullRequests),
-    modelProviders: [modelProvider.provider],
-    db: openDatabase(":memory:"),
-    modelCallTimeoutMs,
-  });
-  return { reviews, modelRequests: modelProvider.requests };
-}
-
 describe("Reviews", () => {
   test("a started Review can be fetched by id with its Findings", async () => {
-    const { reviews } = setup([pullRequest], [{ findings: [sqlInjection] }]);
+    const { reviews } = setupReviews([{ findings: [sqlInjection] }]);
 
     const { id } = await completedReview(reviews, pullRequest);
 
@@ -80,7 +33,7 @@ describe("Reviews", () => {
   });
 
   test("a fetched Review carries each reviewed file's patch, so it can be shown as a diff", async () => {
-    const { reviews } = setup([pullRequest], [{ findings: [sqlInjection] }]);
+    const { reviews } = setupReviews([{ findings: [sqlInjection] }]);
 
     const review = await completedReview(reviews, pullRequest);
 
@@ -93,10 +46,7 @@ describe("Reviews", () => {
     ["a missing field", { ...sqlInjection, title: undefined }],
     ["a mistyped field", { ...sqlInjection, startLine: "three" }],
   ])("a reply with a Finding with %s is invalid and retried", async (_, invalidFinding) => {
-    const { reviews, modelRequests } = setup(
-      [pullRequest],
-      [{ findings: [invalidFinding, sqlInjection] }, { findings: [sqlInjection] }],
-    );
+    const { reviews, modelRequests } = setupReviews([{ findings: [invalidFinding, sqlInjection] }, { findings: [sqlInjection] }]);
 
     const review = await completedReview(reviews, pullRequest);
 
@@ -106,10 +56,7 @@ describe("Reviews", () => {
   });
 
   test("a Finding whose line range ends before it starts is dropped", async () => {
-    const { reviews, modelRequests } = setup(
-      [pullRequest],
-      [{ findings: [{ ...sqlInjection, startLine: 4, endLine: 3 }, sqlInjection] }],
-    );
+    const { reviews, modelRequests } = setupReviews([{ findings: [{ ...sqlInjection, startLine: 4, endLine: 3 }, sqlInjection] }]);
 
     const review = await completedReview(reviews, pullRequest);
 
@@ -149,7 +96,7 @@ describe("Reviews", () => {
       ["a run of added lines", 11, 12],
     ])("a Finding on %s is kept", async (_, startLine, endLine) => {
       const finding = { ...sqlInjection, startLine, endLine };
-      const { reviews } = setup([twoHunks], [{ findings: [finding] }]);
+      const { reviews } = setupReviews([{ findings: [finding] }], { pullRequests: [twoHunks] });
 
       const review = await completedReview(reviews, twoHunks);
 
@@ -165,10 +112,7 @@ describe("Reviews", () => {
       ["a removed line, by its old line number", 20, 20],
       ["a made-up line past the end of the file", 99, 120],
     ])("a Finding on %s is dropped", async (_, startLine, endLine) => {
-      const { reviews, modelRequests } = setup(
-        [twoHunks],
-        [{ findings: [{ ...sqlInjection, startLine, endLine }, { ...sqlInjection, startLine: 11, endLine: 11 }] }],
-      );
+      const { reviews, modelRequests } = setupReviews([{ findings: [{ ...sqlInjection, startLine, endLine }, { ...sqlInjection, startLine: 11, endLine: 11 }] }], { pullRequests: [twoHunks] });
 
       const review = await completedReview(reviews, twoHunks);
 
@@ -194,7 +138,7 @@ describe("Reviews", () => {
       title: "Hard-coded secret",
       explanation: "An API key is committed to the repository.",
     };
-    const { reviews, modelRequests } = setup([twoFiles], [{ findings: [sqlInjection] }, { findings: [hardCodedSecret] }]);
+    const { reviews, modelRequests } = setupReviews([{ findings: [sqlInjection] }, { findings: [hardCodedSecret] }], { pullRequests: [twoFiles] });
 
     const review = await completedReview(reviews, twoFiles);
 
@@ -218,7 +162,7 @@ describe("Reviews", () => {
         { path: "src/build/steps.ts", patch: "@@ -0,0 +1 @@\n+export const steps = [];" },
       ],
     };
-    const { reviews, modelRequests } = setup([withSkippable], [{ findings: [sqlInjection] }, { findings: [] }]);
+    const { reviews, modelRequests } = setupReviews([{ findings: [sqlInjection] }, { findings: [] }], { pullRequests: [withSkippable] });
 
     const review = await completedReview(reviews, withSkippable);
 
@@ -242,7 +186,7 @@ describe("Reviews", () => {
       ...pullRequest,
       files: [{ path: "src/generated.ts", patch: [`@@ -0,0 +1,${hugeLines.length} @@`, ...hugeLines].join("\n") }, pullRequest.files[0]!],
     };
-    const { reviews, modelRequests } = setup([withHugeFile], [{ findings: [] }]);
+    const { reviews, modelRequests } = setupReviews([{ findings: [] }], { pullRequests: [withHugeFile] });
 
     const review = await completedReview(reviews, withHugeFile);
 
@@ -258,10 +202,7 @@ describe("Reviews", () => {
       ...pullRequest,
       files: [{ path: "src/config.ts", patch: "@@ -0,0 +1 @@\n+export const retries = 3;" }, pullRequest.files[0]!],
     };
-    const { reviews, modelRequests } = setup(
-      [twoFiles],
-      ['{"findings": [', "I could not find any problems.", { findings: [sqlInjection] }],
-    );
+    const { reviews, modelRequests } = setupReviews(['{"findings": [', "I could not find any problems.", { findings: [sqlInjection] }], { pullRequests: [twoFiles] });
 
     const review = await completedReview(reviews, twoFiles);
 
@@ -279,7 +220,7 @@ describe("Reviews", () => {
       ...pullRequest,
       files: [pullRequest.files[0]!, { path: "src/config.ts", patch: "@@ -0,0 +1 @@\n+export const retries = 3;" }],
     };
-    const { reviews, modelRequests } = setup([twoFiles], [{ findings: [] }, { findings: [] }]);
+    const { reviews, modelRequests } = setupReviews([{ findings: [] }, { findings: [] }], { pullRequests: [twoFiles] });
 
     await completedReview(reviews, twoFiles);
 
@@ -302,7 +243,7 @@ describe("Reviews", () => {
         },
       ],
     };
-    const { reviews, modelRequests } = setup([twoHunks], [{ findings: [] }]);
+    const { reviews, modelRequests } = setupReviews([{ findings: [] }], { pullRequests: [twoHunks] });
 
     await completedReview(reviews, twoHunks);
 
@@ -312,7 +253,7 @@ describe("Reviews", () => {
   });
 
   test("a Review of an unknown Pull Request doesn't start", async () => {
-    const { reviews, modelRequests } = setup([pullRequest], []);
+    const { reviews, modelRequests } = setupReviews();
 
     const outcome = await reviews.start({ ...pullRequest, number: 999 }, { modelProvider: "Ollama", model: "test-model" });
 
@@ -321,14 +262,14 @@ describe("Reviews", () => {
   });
 
   test("an unknown Review is undefined", async () => {
-    const { reviews } = setup([pullRequest], []);
+    const { reviews } = setupReviews();
 
     expect(reviews.get("nope")).toBeUndefined();
     expect(reviews.follow("nope")).toBeUndefined();
   });
 
   test("a Security Reference on a Bad Practice is dropped", async () => {
-    const { reviews } = setup([pullRequest], [{ findings: [{ ...sqlInjection, kind: "bad-practice" }] }]);
+    const { reviews } = setupReviews([{ findings: [{ ...sqlInjection, kind: "bad-practice" }] }]);
 
     const review = await completedReview(reviews, pullRequest);
 
@@ -336,7 +277,7 @@ describe("Reviews", () => {
   });
 
   test("a Finding whose optional fields are null is kept without them", async () => {
-    const { reviews } = setup([pullRequest], [{ findings: [{ ...sqlInjection, suggestedFix: null, securityReference: null }] }]);
+    const { reviews } = setupReviews([{ findings: [{ ...sqlInjection, suggestedFix: null, securityReference: null }] }]);
 
     const review = await completedReview(reviews, pullRequest);
 
@@ -346,7 +287,7 @@ describe("Reviews", () => {
   });
 
   test("a Model call error is retried once, and a valid retry reviews the file", async () => {
-    const { reviews, modelRequests } = setup([pullRequest], [new Error("socket hang up"), { findings: [sqlInjection] }]);
+    const { reviews, modelRequests } = setupReviews([new Error("socket hang up"), { findings: [sqlInjection] }]);
 
     const review = await completedReview(reviews, pullRequest);
 
@@ -356,7 +297,7 @@ describe("Reviews", () => {
   });
 
   test("a Model call that times out is retried once, then fails the file with a reason", async () => {
-    const { reviews, modelRequests } = setup([pullRequest], [hang, hang], 20);
+    const { reviews, modelRequests } = setupReviews([hang, hang], { modelCallTimeoutMs: 20 });
 
     const review = await completedReview(reviews, pullRequest);
 
@@ -367,7 +308,7 @@ describe("Reviews", () => {
   });
 
   test("a Model call that times out is retried once, and a valid retry reviews the file", async () => {
-    const { reviews } = setup([pullRequest], [hang, { findings: [sqlInjection] }], 20);
+    const { reviews } = setupReviews([hang, { findings: [sqlInjection] }], { modelCallTimeoutMs: 20 });
 
     const review = await completedReview(reviews, pullRequest);
 
@@ -377,7 +318,7 @@ describe("Reviews", () => {
 
   test("an unreachable Model Provider fails each file with the error, and the Review still completes", async () => {
     const refused = new Error("connect ECONNREFUSED 127.0.0.1:11434");
-    const { reviews, modelRequests } = setup([pullRequest], [refused, refused]);
+    const { reviews, modelRequests } = setupReviews([refused, refused]);
 
     const review = await completedReview(reviews, pullRequest);
 
@@ -389,16 +330,39 @@ describe("Reviews", () => {
   });
 
   test("a reply that isn't JSON is retried once, and a valid retry reviews the file", async () => {
-    const { reviews, modelRequests } = setup(
-      [pullRequest],
-      ["Sure! Here are the problems I found: ...", { findings: [sqlInjection] }],
-    );
+    const { reviews, modelRequests } = setupReviews(["Sure! Here are the problems I found: ...", { findings: [sqlInjection] }]);
 
     const review = await completedReview(reviews, pullRequest);
 
     expect(modelRequests).toHaveLength(2);
     expect(review.fileOutcomes).toEqual([reviewed("src/users.ts")]);
     expect(review.findings).toEqual([{ ...sqlInjection, file: "src/users.ts" }]);
+  });
+
+  test("a changed file Diffwise can't handle fails that file, and the Review still completes and is saved", async () => {
+    // No Forge sends a file without a patch: this stands for whatever could go wrong before the Model is asked.
+    const broken = { path: "src/broken.ts", patch: undefined as unknown as string };
+    const withBroken = { ...pullRequest, files: [broken, ...pullRequest.files] };
+    const { reviews, restart } = setupReviews([{ findings: [sqlInjection] }], { pullRequests: [withBroken] });
+
+    const review = await completedReview(reviews, withBroken);
+
+    expect(review).toMatchObject({
+      status: "complete",
+      fileOutcomes: [
+        { file: "src/broken.ts", outcome: "failed", reason: expect.stringMatching(/couldn't review it/) },
+        reviewed("src/users.ts"),
+      ],
+      pendingFiles: [],
+      findings: [{ title: "SQL injection", file: "src/users.ts" }],
+    });
+    expect(restart().get(review.id)).toEqual(review);
+  });
+
+  test("starting a Review of a Pull Request in a Repository the GitHub App isn't installed on throws a ForgeAccessError", async () => {
+    const { reviews } = setupReviews([], { forge: fakeForge([pullRequest], { notInstalledOn: ["acme/shop"] }) });
+
+    await expect(reviews.start(pullRequest, { modelProvider: "Ollama", model: "test-model" })).rejects.toThrow(ForgeAccessError);
   });
 });
 
@@ -418,7 +382,7 @@ describe("Reviews saved by an earlier version", () => {
       `);
       old.close();
       const db = openDatabase(path);
-      const reviews = createReviews({ forge: fixtureForge([pullRequest]), modelProviders: [], db });
+      const { reviews } = setupReviews([], { db });
 
       const review = reviews.get("old");
       db.close();
@@ -431,14 +395,10 @@ describe("Reviews saved by an earlier version", () => {
 });
 
 describe("Model Providers", () => {
-  function setupProviders(...modelProviders: ModelProvider[]) {
-    return createReviews({ forge: fixtureForge([pullRequest]), modelProviders, db: openDatabase(":memory:") });
-  }
-
   test("a Review runs on the chosen Model Provider and Model, and records both", async () => {
     const ollama = fakeModelProvider([], { name: "Ollama" });
     const openAI = fakeModelProvider([{ findings: [sqlInjection] }], { name: "OpenAI-compatible", models: ["gpt-4o"] });
-    const reviews = setupProviders(ollama.provider, openAI.provider);
+    const { reviews } = setupReviews([], { modelProviders: [ollama.provider, openAI.provider] });
 
     const review = await completedReview(reviews, pullRequest, { modelProvider: "OpenAI-compatible", model: "gpt-4o" });
 
@@ -449,10 +409,41 @@ describe("Model Providers", () => {
 
   test("a Review on an unknown Model Provider doesn't start", async () => {
     const { provider, requests } = fakeModelProvider([]);
-    const reviews = setupProviders(provider);
+    const { reviews } = setupReviews([], { modelProviders: [provider] });
     const choice: ModelChoice = { modelProvider: "Nope", model: "test-model" };
 
     expect(await reviews.start(pullRequest, choice)).toEqual({ started: false, missing: "model-provider" });
     expect(requests).toHaveLength(0);
+  });
+
+  test("a Model its Model Provider lists only as `<model>:latest` starts a Review, which records the Model as named", async () => {
+    const { reviews, modelRequests } = setupReviews([{ findings: [] }], { models: ["llama3.1:latest", "qwen2.5-coder:7b"] });
+
+    const review = await completedReview(reviews, pullRequest, { modelProvider: "Ollama", model: "llama3.1" });
+
+    expect(review).toMatchObject({ modelProvider: "Ollama", model: "llama3.1" });
+    expect(modelRequests.map((request) => request.model)).toEqual(["llama3.1"]);
+  });
+
+  test("a Model its Model Provider doesn't list starts no Review, and the outcome names the Models it does list", async () => {
+    const { reviews, modelRequests } = setupReviews([{ findings: [] }], { models: ["llama3.1:8b", "qwen2.5-coder:7b"] });
+
+    const outcome = await reviews.start(pullRequest, { modelProvider: "Ollama", model: "llama3.1:7b" });
+
+    expect(outcome).toEqual({ started: false, missing: "model", offeredModels: ["llama3.1:8b", "qwen2.5-coder:7b"] });
+    expect(modelRequests).toHaveLength(0);
+    expect(await reviews.list(pullRequest)).toEqual([]);
+  });
+
+  test("a Model Provider that can't list its Models starts no Review, and the outcome carries its reason", async () => {
+    const { reviews, modelRequests } = setupReviews([{ findings: [] }], {
+      models: new Error("connect ECONNREFUSED 127.0.0.1:11434"),
+    });
+
+    const outcome = await reviews.start(pullRequest, { modelProvider: "Ollama", model: "test-model" });
+
+    expect(outcome).toEqual({ started: false, unusable: "model-provider", reason: "connect ECONNREFUSED 127.0.0.1:11434" });
+    expect(modelRequests).toHaveLength(0);
+    expect(await reviews.list(pullRequest)).toEqual([]);
   });
 });
