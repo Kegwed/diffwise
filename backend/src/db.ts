@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { OLLAMA } from "./model-provider-config.ts";
-import type { FileOutcome, Finding, FindingKind, PullRequestRef, Review, ReviewSummary, Severity } from "@diffwise/shared";
+import type { FileOutcome, Finding, FindingKind, PullRequestRef, Review, Severity } from "@diffwise/shared";
 
 export type Database = DatabaseSync;
 
@@ -151,16 +151,23 @@ export function getReview(db: Database, id: string): Review | undefined {
   };
 }
 
+/** A Review as a list of Reviews needs it: no File Outcomes, and only the kind of each Finding. */
+export type ListedReview = Pick<Review, "id" | "modelProvider" | "model" | "headCommit" | "createdAt" | "status"> & {
+  findings: Pick<Finding, "kind">[];
+};
+
 /** The Pull Request's saved Reviews, newest first. Whether each is Outdated isn't saved, so it's left to the caller. */
-export function listReviewSummaries(db: Database, { owner, repo, number }: PullRequestRef): Omit<ReviewSummary, "outdated">[] {
+export function listReviews(db: Database, { owner, repo, number }: PullRequestRef): ListedReview[] {
   const rows = db
+    .prepare("SELECT * FROM reviews WHERE owner = ? AND repo = ? AND number = ? ORDER BY created_at DESC, rowid DESC")
+    .all(owner, repo, number) as unknown as ReviewRow[];
+  const findingRows = db
     .prepare(
-      `SELECT reviews.*,
-         (SELECT COUNT(*) FROM findings WHERE review_id = reviews.id AND kind = 'bad-practice') AS bad_practices,
-         (SELECT COUNT(*) FROM findings WHERE review_id = reviews.id AND kind = 'security-issue') AS security_issues
-       FROM reviews WHERE owner = ? AND repo = ? AND number = ? ORDER BY created_at DESC, rowid DESC`,
+      `SELECT findings.review_id, findings.kind FROM findings JOIN reviews ON reviews.id = findings.review_id
+       WHERE owner = ? AND repo = ? AND number = ? ORDER BY findings.position`,
     )
-    .all(owner, repo, number) as unknown as (ReviewRow & { bad_practices: number; security_issues: number })[];
+    .all(owner, repo, number) as unknown as { review_id: string; kind: FindingKind }[];
+  const findings = Map.groupBy(findingRows, (finding) => finding.review_id);
   return rows.map((row) => ({
     id: row.id,
     modelProvider: row.model_provider,
@@ -169,7 +176,7 @@ export function listReviewSummaries(db: Database, { owner, repo, number }: PullR
     createdAt: row.created_at,
     // Only complete Reviews are saved.
     status: "complete",
-    findingCounts: { "bad-practice": row.bad_practices, "security-issue": row.security_issues },
+    findings: (findings.get(row.id) ?? []).map(({ kind }) => ({ kind })),
   }));
 }
 

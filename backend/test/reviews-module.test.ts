@@ -180,7 +180,6 @@ describe("The Reviews module", () => {
       { id: running.id, status: "running", findingCounts: { "bad-practice": 0, "security-issue": 0 } },
       { id: saved.id, status: "complete", findingCounts: { "bad-practice": 0, "security-issue": 1 } },
     ]);
-    expect(Object.keys(listed[0]!).sort()).toEqual(Object.keys(listed[1]!).sort());
 
     second.release();
     await completion(reviews, running.id);

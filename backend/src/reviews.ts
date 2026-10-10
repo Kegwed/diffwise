@@ -1,5 +1,5 @@
 import { isOutdated, type FindingKind, type ModelChoice, type PullRequestRef, type Review, type ReviewEvent, type ReviewSummary } from "@diffwise/shared";
-import { getReview, listReviewSummaries, saveReview, type Database } from "./db.ts";
+import { getReview, listReviews, saveReview, type Database, type ListedReview } from "./db.ts";
 import type { Forge } from "./forge.ts";
 import { modelUnavailable, type ModelProvider, type ModelUnavailable } from "./model-provider.ts";
 import { startReview, type ReviewRun } from "./review-engine.ts";
@@ -77,7 +77,7 @@ export function createReviews({ forge, modelProviders, db, modelCallTimeoutMs }:
         .map((run) => run.current())
         .filter((review) => isSamePullRequest(review.pullRequest, pullRequest))
         .map(summary);
-      const reviews = [...unsaved, ...listReviewSummaries(db, pullRequest)].sort(newestFirst);
+      const reviews = [...unsaved, ...listReviews(db, pullRequest).map(summary)].sort(newestFirst);
       // Outdated is worked out against the head commit as it is now, so it's never saved.
       return reviews.map((review) => ({ ...review, outdated: isOutdated(review, pullRequest) }));
     },
@@ -101,8 +101,8 @@ function isSamePullRequest(a: PullRequestRef, b: PullRequestRef): boolean {
   return a.owner === b.owner && a.repo === b.repo && a.number === b.number;
 }
 
-/** A Review that isn't saved (it's still running, mostly), as a list of Reviews shows it. */
-function summary({ id, modelProvider, model, headCommit, createdAt, status, findings }: Review): Omit<ReviewSummary, "outdated"> {
+/** A Review, running or saved, as a list of Reviews shows it. */
+function summary({ id, modelProvider, model, headCommit, createdAt, status, findings }: ListedReview): Omit<ReviewSummary, "outdated"> {
   const count = (kind: FindingKind) => findings.filter((finding) => finding.kind === kind).length;
   return {
     id,
