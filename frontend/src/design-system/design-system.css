@@ -46,3 +46,11 @@
 .dw-fix-summary:hover { color: var(--ink); }
 .dw-fix-summary:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus-ring); }
 .dw-code { margin: 0; background: var(--surface-sunken); border-top: 1px solid var(--line); padding: var(--space-2) var(--space-4); font-family: var(--font-mono); font-size: 13px; line-height: 20px; color: var(--ink); white-space: pre; overflow-x: auto; }
+
+/* ConnectionStatus */
+.dw-conn { display: inline-flex; align-items: center; gap: var(--space-2); font-size: 12px; line-height: 16px; color: var(--ink-muted); }
+.dw-conn-dot { flex: none; width: 8px; height: 8px; border-radius: var(--radius-full); }
+.dw-conn-ok { background: var(--status-ok); }
+.dw-conn-warn { background: var(--status-warn); }
+.dw-conn-error { background: var(--status-error); }
+.dw-conn-idle { background: var(--status-idle); }

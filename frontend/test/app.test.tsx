@@ -1345,6 +1345,61 @@ test.each<[string, ModelProviderListing[], RegExp]>([
   expect(screen.getByRole("button", { name: "Review" })).toBeDisabled();
 });
 
+/** The header's connection statuses, as their text reads. */
+async function connections() {
+  const list = await screen.findByRole("list", { name: "Connections" });
+  return within(list)
+    .getAllByRole("listitem")
+    .map((item) => item.textContent);
+}
+
+describe("the page header", () => {
+  test("every view has the Diffwise name linking to the first page, and says GitHub is connected once the App is created", async () => {
+    stubApi();
+    await openPullRequest();
+
+    expect(within(screen.getByRole("banner")).getByRole("link", { name: "Diffwise" })).toHaveAttribute("href", "#/");
+    await waitFor(async () => expect(await connections()).toContain("GitHub connected"));
+  });
+
+  test("with no GitHub App created, the header says GitHub isn't connected", async () => {
+    stubApi(review, modelListing, { "/api/github-app": () => Response.json({ status: "not-created" }) });
+    await openPullRequest();
+
+    await waitFor(async () => expect(await connections()).toContain("GitHub not connected"));
+  });
+
+  test("the header says, for each Model Provider, whether it's connected or unavailable", async () => {
+    stubApi(review, [
+      { modelProvider: "Ollama", status: "available", models: ["llama3.1:8b"] },
+      { modelProvider: "OpenAI-compatible", status: "unavailable", reason: "Couldn't reach https://llm.example/v1." },
+    ]);
+    await openPullRequest();
+
+    await waitFor(async () =>
+      expect(await connections()).toEqual(["GitHub connected", "Ollama connected", "OpenAI-compatible unavailable"]),
+    );
+  });
+
+  test("until it hears back, the header says it's checking GitHub and the Model Providers", async () => {
+    const fetch = stubApi();
+    fetch.mockImplementation(() => new Promise<Response>(() => {}));
+    render(<App />);
+
+    expect(await connections()).toEqual(["Checking GitHub", "Checking Model Providers"]);
+  });
+
+  test("on the first view, when GitHub couldn't list the Repositories, the header says GitHub is unreachable", async () => {
+    stubApi(review, modelListing, {
+      "/api/repositories": () => Response.json({ repositories: [], unlisted: "GitHub didn't answer." }),
+    });
+    render(<App />);
+
+    await waitFor(async () => expect(await connections()).toContain("GitHub unreachable"));
+    expect(await connections()).not.toContain("GitHub connected");
+  });
+});
+
 describe("connecting to GitHub", () => {
   test("with no GitHub App created, the page offers to create one", async () => {
     stubApi(review, modelListing, { "/api/github-app": () => Response.json({ status: "not-created" }) });
