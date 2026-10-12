@@ -1,7 +1,7 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { expect, test } from "vitest";
-import { Badge, Button, ConnectionStatus, Finding, Severity } from "../src/design-system/index.ts";
+import { expect, test, vi } from "vitest";
+import { Badge, Button, ConnectionStatus, Finding, Notice, ReviewState, Severity } from "../src/design-system/index.ts";
 
 test.each([
   ["critical", "Critical", 4],
@@ -103,4 +103,30 @@ test("a ConnectionStatus reads without colour: its text says the state, and its 
 
   expect(screen.getByRole("listitem")).toHaveTextContent(/^GitHub unreachable$/);
   expect(container.querySelector(".dw-conn-dot")).toHaveAttribute("aria-hidden", "true");
+});
+
+test.each([
+  ["running", "Running"],
+  ["complete", "Complete"],
+  ["unsaved", "Unsaved"],
+  ["outdated", "Outdated"],
+] as const)("a %s ReviewState reads without colour: it says %s, beside a marker hidden from screen readers", (state, label) => {
+  const { container } = render(<ReviewState state={state} />);
+
+  expect(container.firstElementChild).toHaveTextContent(new RegExp(`^${label}$`));
+  expect(container.querySelector(".dw-state-mark")).toHaveAttribute("aria-hidden", "true");
+});
+
+test("a Notice names the situation, says what it means, and offers its one action", async () => {
+  const onClick = vi.fn();
+  render(
+    <Notice role="note" title="Outdated" action={<Button onClick={onClick}>Review the latest commit</Button>}>
+      New commits were pushed since this Review ran.
+    </Notice>,
+  );
+
+  const notice = screen.getByRole("note");
+  expect(notice).toHaveTextContent(/^OutdatedNew commits were pushed since this Review ran\.Review the latest commit$/);
+  await userEvent.click(within(notice).getByRole("button", { name: "Review the latest commit" }));
+  expect(onClick).toHaveBeenCalledOnce();
 });

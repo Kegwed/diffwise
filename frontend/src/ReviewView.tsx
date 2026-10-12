@@ -3,7 +3,6 @@ import { SEVERITIES, type FileOutcome, type Finding, type PendingFile, type Revi
 import { DiffView } from "./DiffView.tsx";
 import { FindingsPanel } from "./FindingsPanel.tsx";
 import { matchesFilter, NO_FILTER, type Jump } from "./findings.ts";
-import { HeadCommit } from "./HeadCommit.tsx";
 import { Badge, Button } from "./design-system/index.ts";
 
 const OUTCOME_LABELS: Record<FileOutcome["outcome"], string> = {
@@ -43,16 +42,9 @@ export function ReviewView({ review, outdated, onReviewLatest }: ReviewViewProps
   const inDiffOrder = files.flatMap((file) => byFile.get(file) ?? []);
   const shownByFile = Map.groupBy(inDiffOrder.filter((finding) => matchesFilter(finding, filter)), (finding) => finding.file);
   const running = review.status === "running";
-  const { owner, repo, number } = review.pullRequest;
 
   return (
-    <section aria-labelledby="review">
-      <h2 id="review">
-        Review of {owner}/{repo}#{number}
-      </h2>
-      <p className="caption">
-        {review.model} via {review.modelProvider} at <HeadCommit commit={review.headCommit} />
-      </p>
+    <>
       {outdated === "outdated" && (
         <div role="note" className="outdated-notice panel-sunken">
           <Badge>Outdated</Badge>
@@ -116,7 +108,7 @@ export function ReviewView({ review, outdated, onReviewLatest }: ReviewViewProps
           })}
         </div>
       </div>
-    </section>
+    </>
   );
 }
 

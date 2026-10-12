@@ -6,16 +6,8 @@ import { reviewHref } from "./route.ts";
 
 const DATE_FORMAT = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
 
-/** A Pull Request's Reviews, newest first, each leading to the Review itself; `openId` names the one being shown. */
-export function ReviewList({
-  pullRequest,
-  reviews,
-  openId,
-}: {
-  pullRequest: PullRequestRef;
-  reviews: ReviewSummary[];
-  openId?: string;
-}) {
+/** A Pull Request's Reviews, newest first, each leading to the Review's own page. */
+export function ReviewList({ pullRequest, reviews }: { pullRequest: PullRequestRef; reviews: ReviewSummary[] }) {
   return (
     <section aria-labelledby="reviews">
       <h2 id="reviews">Reviews</h2>
@@ -26,7 +18,7 @@ export function ReviewList({
           {reviews.map((review) => (
             <li key={review.id}>
               <div className="row-head">
-                <a href={reviewHref(pullRequest, review.id)} aria-current={review.id === openId ? "true" : undefined}>
+                <a href={reviewHref(pullRequest, review.id)}>
                   {review.model} via {review.modelProvider}
                 </a>
                 {review.status === "running" && <Badge tone="outline">Running</Badge>}
