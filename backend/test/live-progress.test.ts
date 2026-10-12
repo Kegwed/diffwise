@@ -183,17 +183,18 @@ describe("Saving a complete Review", () => {
     expect(Symbol.asyncIterator in followed).toBe(true);
   });
 
-  test("a complete Review that can't be saved can still be read and is listed, until Diffwise restarts", async () => {
+  test("a Review that can't be saved is Unsaved, and can still be read and is listed, until Diffwise restarts", async () => {
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
     const { reviews, db, restart } = setup([{ findings: [sqlInjection] }, { findings: [] }]);
     db.exec("CREATE TRIGGER disk_full BEFORE INSERT ON reviews BEGIN SELECT RAISE(ABORT, 'disk full'); END");
+    const { id } = await startReview(reviews, pullRequest);
 
-    const { id } = await completedReview(reviews, pullRequest);
-    await vi.waitFor(() => expect(logged).toHaveBeenCalledWith(expect.stringContaining(id), expect.any(Error)));
+    expect((await followReview(reviews, id).rest()).at(-1)).toEqual({ type: "unsaved" });
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining(id), expect.any(Error));
 
-    expect(reviews.get(id)).toMatchObject({ status: "complete", findings: [{ title: "SQL injection" }] });
-    expect(await reviews.list(pullRequest)).toMatchObject([{ id, status: "complete" }]);
-    expect((await followReview(reviews, id).rest()).map((event) => event.type)).toEqual(["review", "complete"]);
+    expect(reviews.get(id)).toMatchObject({ status: "unsaved", findings: [{ title: "SQL injection" }] });
+    expect(await reviews.list(pullRequest)).toMatchObject([{ id, status: "unsaved" }]);
+    expect((await followReview(reviews, id).rest()).map((event) => event.type)).toEqual(["review", "unsaved"]);
     expect(restart().get(id)).toBeUndefined();
     logged.mockRestore();
   });

@@ -30,6 +30,7 @@ export function ReviewList({
                   {review.model} via {review.modelProvider}
                 </a>
                 {review.status === "running" && <Badge tone="outline">Running</Badge>}
+                {review.status === "unsaved" && <Badge>Unsaved</Badge>}
                 {review.outdated && <Badge>Outdated</Badge>}
               </div>
               <div className="caption">

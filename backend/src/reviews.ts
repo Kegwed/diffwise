@@ -20,7 +20,7 @@ export type StartOutcome =
   | ({ started: false } & ModelUnavailable);
 
 /**
- * Diffwise's Reviews: the ones still running, which a restart loses, and the complete ones, which are saved.
+ * Diffwise's Reviews: the complete ones, which are saved, and the running and Unsaved ones, which a restart loses.
  * Whatever reads the Pull Request throws a ForgeAccessError if Diffwise can't read its Repository.
  */
 export interface Reviews {
@@ -34,14 +34,14 @@ export interface Reviews {
    */
   list(pullRequest: PullRequestRef): Promise<ReviewSummary[] | undefined>;
   /**
-   * The Review's progress until it completes or `signal` aborts: first the Review as it stands, then each change to
-   * it, ending with its completion. Undefined if there's no such Review.
+   * The Review's progress until it completes, turns out Unsaved, or `signal` aborts: first the Review as it stands, then
+   * each change to it, ending with its completion or with it turning out Unsaved. Undefined if there's no such Review.
    */
   follow(id: string, signal?: AbortSignal): AsyncIterable<ReviewEvent> | undefined;
 }
 
 export function createReviews({ forge, modelProviders, db, modelCallTimeoutMs }: ReviewsDependencies): Reviews {
-  /** The Reviews still running, by id. They live here until they're complete and saved, so a restart loses them. */
+  /** The Reviews not saved yet, by id: running, or Unsaved. A restart loses them. */
   const running = new Map<string, ReviewRun>();
 
   return {
@@ -52,17 +52,14 @@ export function createReviews({ forge, modelProviders, db, modelCallTimeoutMs }:
       if (!pullRequest) return { started: false, missing: "pull-request" };
       const unavailable = await modelUnavailable(modelProvider, model);
       if (unavailable) return { started: false, ...unavailable };
-      const run = startReview(pullRequest, model, modelProvider, { modelCallTimeoutMs });
+      const run = startReview(pullRequest, model, modelProvider, { modelCallTimeoutMs, save: (review) => saveReview(db, review) });
       const { id } = run.current();
       running.set(id, run);
       // Not awaited: the Review runs on, whether or not anyone follows it.
       run.finished
-        .then((review) => {
-          saveReview(db, review);
-          running.delete(id);
-        })
-        // A Review that couldn't be saved stays here, so it can still be read until Diffwise restarts.
-        .catch((error) => console.error(`Review ${id} didn't complete, or wasn't saved:`, error));
+        .then(() => running.delete(id))
+        // An Unsaved Review stays here, so it can still be read until Diffwise restarts.
+        .catch((error) => console.error(`Review ${id} wasn't saved:`, error));
       return { started: true, review: run.current() };
     },
 

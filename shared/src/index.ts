@@ -79,8 +79,8 @@ export interface Review extends ModelChoice {
   headCommit: string;
   /** When the Review was started. */
   createdAt: string;
-  /** Running until every changed file has its File Outcome. */
-  status: "running" | "complete";
+  /** Running until every changed file has its File Outcome and it has been saved; Unsaved if saving it failed. */
+  status: "running" | "complete" | "unsaved";
   /** One per changed file settled so far, in the Pull Request's file order. */
   fileOutcomes: FileOutcome[];
   /** The changed files still to settle, in the Pull Request's file order; none once the Review is complete. */
@@ -122,4 +122,4 @@ export interface ApiError {
 
 export { isOutdated } from "./outdated.ts";
 export { DIFF_MARKERS, parsePatch, type DiffHunk, type DiffLine } from "./patch.ts";
-export { applyReviewEvent, type ReviewEvent } from "./review-events.ts";
+export { applyReviewEvent, endsProgress, type ReviewEvent } from "./review-events.ts";

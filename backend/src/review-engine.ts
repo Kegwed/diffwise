@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   applyReviewEvent,
   DIFF_MARKERS,
+  endsProgress,
   FINDING_KINDS,
   parsePatch,
   SEVERITIES,
@@ -46,6 +47,8 @@ export const DEFAULT_MODEL_CALL_TIMEOUT_MS = 5 * 60_000;
 export interface ReviewOptions {
   /** How long to wait for one Model call before giving up on it. */
   modelCallTimeoutMs?: number;
+  /** Saves the Review once every changed file has its File Outcome, before it completes. Without it, the Review isn't kept. */
+  save?: (review: Review) => void;
 }
 
 /** A Review that was started and runs on its own, whoever is following it. */
@@ -54,10 +57,10 @@ export interface ReviewRun {
   current(): Review;
   /**
    * The Review's progress from now on: first the Review as it stands, then each change to it, ending with its
-   * completion. Aborting `signal` ends it early, for a follower that has gone.
+   * completion, or with it turning out Unsaved. Aborting `signal` ends it early, for a follower that has gone.
    */
   events(signal?: AbortSignal): AsyncIterable<ReviewEvent>;
-  /** Resolves with the complete Review. */
+  /** Resolves with the complete Review, or rejects with why it couldn't be saved. */
   finished: Promise<Review>;
 }
 
@@ -66,7 +69,7 @@ export function startReview(
   pullRequest: PullRequestSnapshot,
   model: string,
   modelProvider: ModelProvider,
-  { modelCallTimeoutMs = DEFAULT_MODEL_CALL_TIMEOUT_MS }: ReviewOptions = {},
+  { modelCallTimeoutMs = DEFAULT_MODEL_CALL_TIMEOUT_MS, save }: ReviewOptions = {},
 ): ReviewRun {
   const settings: ModelCallSettings = { model, modelProvider, timeoutMs: modelCallTimeoutMs };
   const { owner, repo, number, headCommit } = pullRequest;
@@ -110,14 +113,21 @@ export function startReview(
         settle({ file: file.path, outcome: "failed", reason: `Diffwise couldn't review it: ${(error as Error).message}` });
       }
     }
+    // Saved before it's complete, so a follower that sees it complete can count on it outliving a restart.
+    try {
+      save?.(applyReviewEvent(review, { type: "complete" }));
+    } catch (error) {
+      publish({ type: "unsaved" });
+      throw error;
+    }
     publish({ type: "complete" });
     return review;
   }
 
   async function* events(signal?: AbortSignal): AsyncGenerator<ReviewEvent> {
     const unsent: ReviewEvent[] = [{ type: "review", review }];
-    // A Review that completed before it was followed has no more changes to wait for.
-    if (review.status === "complete") unsent.push({ type: "complete" });
+    // A Review that ended before it was followed has no more changes to wait for.
+    if (review.status !== "running") unsent.push({ type: review.status });
     let wake = () => {};
     const follower = (event: ReviewEvent) => {
       unsent.push(event);
@@ -134,7 +144,7 @@ export function startReview(
           continue;
         }
         yield event;
-        if (event.type === "complete") return;
+        if (endsProgress(event)) return;
       }
     } finally {
       followers.delete(follower);

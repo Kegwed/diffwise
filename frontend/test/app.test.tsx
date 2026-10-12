@@ -519,6 +519,23 @@ describe("live progress while a Review runs", () => {
     expect(stream.readyState).toBe(FakeProgressStream.CLOSED);
   });
 
+  test("a Review that turns out Unsaved stops running, and says a restart of Diffwise will lose it", async () => {
+    stubApi();
+    const progress = stubProgressStream();
+    await startReview();
+    const stream = await progress.followed();
+
+    stream.send({ type: "review", review: { ...review, status: "running" } }, { type: "unsaved" });
+
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Review" })).toBeEnabled();
+    expect(stream.readyState).toBe(FakeProgressStream.CLOSED);
+    const notice = screen.getByRole("note");
+    expect(within(notice).getByText("Unsaved")).toBeInTheDocument();
+    expect(notice).toHaveTextContent("Diffwise couldn't save this Review, so restarting Diffwise will lose it.");
+    expect(findingTitles(screen.getByRole("region", { name: "src/users.ts" }))).toEqual(["SQL injection", "Swallowed error"]);
+  });
+
   test("reopening a running Review picks it up as it stands, then follows it live", async () => {
     stubApi();
     const progress = stubProgressStream();
@@ -720,6 +737,24 @@ describe("a Pull Request's Reviews", () => {
     expect(reviewRow(/gpt-4o/)).toHaveTextContent("1 Security Issue");
     // The Review that was open still is.
     expect(screen.getByRole("region", { name: /review of acme\/shop#7/i })).toHaveTextContent(/llama3\.1:8b via Ollama/);
+  });
+
+  test("a Review that turns out Unsaved while another one is open is listed as Unsaved, not running", async () => {
+    const byGpt: Review = { ...review, id: "review-2", modelProvider: "OpenAI-compatible", model: "gpt-4o", findings: [review.findings[0]!] };
+    let listed: ReviewSummary[] = [{ ...gpt, status: "running" }, llama];
+    stubApi(review, modelListing, { [REVIEWS]: () => Response.json(listed) });
+    const progress = stubProgressStream();
+    window.location.hash = "#/acme/shop/pull/7/reviews/review-1";
+    render(<App />);
+    (await progress.followed("review-1")).send({ type: "review", review }, { type: "complete" });
+    await waitFor(() => expect(within(reviewRow(/gpt-4o/)).getByText("Running")).toBeInTheDocument());
+
+    listed = [{ ...gpt, status: "unsaved", findingCounts: { "bad-practice": 0, "security-issue": 1 } }, llama];
+    (await progress.followed("review-2")).send({ type: "review", review: { ...byGpt, status: "running" } }, { type: "unsaved" });
+
+    await waitFor(() => expect(within(reviewRow(/gpt-4o/)).queryByText("Running")).not.toBeInTheDocument());
+    expect(within(reviewRow(/gpt-4o/)).getByText("Unsaved")).toBeInTheDocument();
+    expect(within(reviewRow(/llama3\.1:8b/)).queryByText("Unsaved")).not.toBeInTheDocument();
   });
 
   test("why a Review couldn't be started is shown even when the Reviews couldn't be listed", async () => {

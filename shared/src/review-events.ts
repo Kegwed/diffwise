@@ -2,7 +2,7 @@ import type { FileOutcome, Finding, Review } from "./index.ts";
 
 /**
  * What a Review's progress stream sends: first the Review as it stands, then each change to it as it happens,
- * ending when the Review completes.
+ * ending when the Review completes, or turns out Unsaved.
  */
 export type ReviewEvent =
   | { type: "review"; review: Review }
@@ -10,7 +10,14 @@ export type ReviewEvent =
   | { type: "file-reviewing"; file: string }
   /** A file has its File Outcome, with the Findings the Review reports in it. */
   | { type: "file-settled"; fileOutcome: FileOutcome; findings: Finding[] }
-  | { type: "complete" };
+  | { type: "complete" }
+  /** Every changed file has its File Outcome, but the Review couldn't be saved. */
+  | { type: "unsaved" };
+
+/** Whether the event is the last of a Review's progress: the Review has completed, or turned out Unsaved. */
+export function endsProgress(event: ReviewEvent): boolean {
+  return event.type === "complete" || event.type === "unsaved";
+}
 
 /** The Review as it stands after one of its progress events. */
 export function applyReviewEvent(review: Review, event: ReviewEvent): Review {
@@ -33,5 +40,7 @@ export function applyReviewEvent(review: Review, event: ReviewEvent): Review {
       };
     case "complete":
       return { ...review, status: "complete" };
+    case "unsaved":
+      return { ...review, status: "unsaved" };
   }
 }

@@ -6,7 +6,7 @@ import { followReview } from "./api.ts";
 export interface FollowedReview {
   review?: Review;
   error?: string;
-  /** Whether the Review was seen running and has since completed, so what was loaded about it while it ran is out of date. */
+  /** Whether the Review was seen running and has since stopped, so what was loaded about it while it ran is out of date. */
   completedWhileFollowed: boolean;
 }
 
@@ -32,5 +32,5 @@ export function useFollowedReview(id: string | undefined): FollowedReview {
   // What was followed before `id` changed isn't this Review.
   if (!followed || followed.id !== id) return { completedWhileFollowed: false };
   const { review, error, seenRunning } = followed;
-  return { review, error, completedWhileFollowed: seenRunning === true && review?.status === "complete" };
+  return { review, error, completedWhileFollowed: seenRunning === true && review !== undefined && review.status !== "running" };
 }

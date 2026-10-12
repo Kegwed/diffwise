@@ -36,8 +36,8 @@ export function PullRequestView({ pullRequest, reviewId }: { pullRequest: PullRe
   const modelChoice = chosenModel ?? (modelListings.data && firstModel(modelListings.data));
   // Why a Review couldn't be started comes first: it answers what the user just did.
   const error = startError ?? detail.error ?? modelListings.error ?? reviews.error ?? followed.error;
-  // A Review that was asked for and isn't known to be complete (or lost) is taken to be running.
-  const reviewing = starting || (reviewId !== undefined && !followed.error && followed.review?.status !== "complete");
+  // A Review that was asked for and isn't known to have stopped (or be lost) is taken to be running.
+  const reviewing = starting || (reviewId !== undefined && !followed.error && (followed.review?.status ?? "running") === "running");
 
   async function start(modelChoice: ModelChoice) {
     setStarting(true);

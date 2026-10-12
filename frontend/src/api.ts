@@ -13,6 +13,7 @@ import type {
   ReviewSummary,
   StartReviewRequest,
 } from "@diffwise/shared";
+import { endsProgress } from "@diffwise/shared";
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
@@ -80,8 +81,8 @@ export function followReview(id: string, onEvent: (event: ReviewEvent) => void, 
   let following = true;
   source.onmessage = (message) => {
     const event = JSON.parse(message.data) as ReviewEvent;
-    // The stream ends at completion; left open, the browser would reconnect to it.
-    if (event.type === "complete") source.close();
+    // The stream ends there; left open, the browser would reconnect to it.
+    if (endsProgress(event)) source.close();
     onEvent(event);
   };
   source.onerror = () => {

@@ -188,7 +188,8 @@ a {
   background: var(--surface-sunken);
 }
 
-.outdated-notice {
+.outdated-notice,
+.unsaved-notice {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -196,7 +197,8 @@ a {
   margin: var(--space-4) 0;
 }
 
-.outdated-notice p {
+.outdated-notice p,
+.unsaved-notice p {
   flex: 1;
   min-width: 16ch;
   margin: 0;

@@ -68,6 +68,12 @@ export function ReviewView({ review, outdated, onReviewLatest }: ReviewViewProps
           be Outdated.
         </p>
       )}
+      {review.status === "unsaved" && (
+        <div role="note" className="unsaved-notice panel-sunken">
+          <Badge>Unsaved</Badge>
+          <p>Diffwise couldn't save this Review, so restarting Diffwise will lose it.</p>
+        </div>
+      )}
       {running && (
         <p role="status">
           Reviewing: {review.fileOutcomes.length} of {review.fileOutcomes.length + review.pendingFiles.length} files done.
