@@ -265,6 +265,81 @@ describe("a Review's page", () => {
     expect(screen.queryByRole("button", { name: "Review" })).not.toBeInTheDocument();
     expect(screen.queryByRole("list", { name: "Reviews" })).not.toBeInTheDocument();
   });
+
+  test("while a Review runs, its page shows how many of the files to review are done, not counting skipped ones", async () => {
+    stubApi();
+    const progress = stubProgressStream();
+    window.location.hash = "#/acme/shop/pull/7/reviews/review-1";
+    render(<App />);
+
+    (await progress.followed()).send({
+      type: "review",
+      review: {
+        ...review,
+        status: "running",
+        fileOutcomes: [
+          { file: "package-lock.json", outcome: "skipped", reason: "Lockfile" },
+          { file: "src/users.ts", outcome: "reviewed", patch: usersPatch },
+        ],
+        pendingFiles: [{ file: "src/config.ts", state: "reviewing" }],
+        findings: [review.findings[0]!],
+      },
+    });
+
+    const running = screen.getByRole("status");
+    expect(running).toHaveTextContent(
+      "Reviewing: 1 of 2 files" + "Findings appear as each file finishes. If Diffwise restarts, this Review is lost.",
+    );
+    const bar = within(running).getByRole("progressbar", { name: "Review progress" });
+    expect([bar.getAttribute("aria-valuenow"), bar.getAttribute("aria-valuemax")]).toEqual(["1", "2"]);
+  });
+
+  test("an Unsaved Review's page says it isn't saved, and that a restart loses it", async () => {
+    stubApi();
+    stubProgressStream([{ type: "review", review: { ...review, status: "unsaved" } }]);
+    window.location.hash = "#/acme/shop/pull/7/reviews/review-1";
+    render(<App />);
+
+    expect(await screen.findByRole("note")).toHaveTextContent(
+      "Unsaved" + "This Review has finished but isn't saved. If Diffwise restarts, it is lost.",
+    );
+  });
+
+  test("an Outdated Review's page names the latest commit, and the Model a Review of it would run on", async () => {
+    stubApi();
+    stubProgressStream([{ type: "review", review: { ...review, headCommit: "0ld5678fed" } }, { type: "complete" }]);
+    window.location.hash = "#/acme/shop/pull/7/reviews/review-1";
+    render(<App />);
+
+    const page = await openedReview();
+    const notice = await within(page).findByRole("note");
+    expect(notice).toHaveTextContent(
+      "Outdated" +
+        "New commits were pushed after 0ld5678, so these Findings may not apply to the latest commit. " +
+        "A Review of it runs with the same Model, llama3.1:8b on Ollama." +
+        "Review the latest commit",
+    );
+    expect(within(notice).getByRole("button", { name: "Review the latest commit" })).toHaveClass("dw-btn-primary");
+    expect(details(page)).toMatchObject({ "Reviewed commit": "0ld5678 Latest on GitHub: abc1234", State: "Outdated" });
+  });
+
+  test("a Review with skipped or failed files says how many of the changed files its Findings cover", async () => {
+    stubApi({
+      ...review,
+      fileOutcomes: [
+        { file: "package-lock.json", outcome: "skipped", reason: "Lockfile" },
+        { file: "src/users.ts", outcome: "reviewed", patch: usersPatch },
+        { file: "src/config.ts", outcome: "reviewed", patch: configPatch },
+        { file: "src/report.ts", outcome: "failed", reason: "Failed twice." },
+      ],
+    });
+    window.location.hash = "#/acme/shop/pull/7/reviews/review-1";
+    render(<App />);
+
+    expect(await screen.findByRole("note")).toHaveTextContent(
+      "Incomplete coverage" + "1 file failed and 1 file was skipped, so these Findings cover 2 of 4 changed files.",
+    );
+  });
 });
 
 describe("browsing to a Pull Request", () => {
@@ -501,7 +576,7 @@ describe("live progress while a Review runs", () => {
     const config = screen.getByRole("region", { name: "src/config.ts" });
     expect(within(users).getByText("Reviewing")).toHaveClass("dw-badge-neutral");
     expect(within(config).getByText("Queued")).toHaveClass("dw-badge-outline");
-    expect(screen.getByRole("status")).toHaveTextContent("Reviewing: 0 of 2 files done.");
+    expect(screen.getByRole("status")).toHaveTextContent("Reviewing: 0 of 2 files");
     expect(screen.getByText("No Findings yet.")).toBeInTheDocument();
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
 
@@ -515,7 +590,7 @@ describe("live progress while a Review runs", () => {
     expect(findingsBeneath(users, 3)).toEqual(["SQL injection"]);
     expect(findingsBeneath(users, 6)).toEqual(["Swallowed error"]);
     expect(within(config).getByText("Queued")).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent("Reviewing: 1 of 2 files done.");
+    expect(screen.getByRole("status")).toHaveTextContent("Reviewing: 1 of 2 files");
     expect(screen.queryByText(/no findings/i)).not.toBeInTheDocument();
 
     stream.send({ type: "file-reviewing", file: "src/config.ts" });
@@ -531,12 +606,12 @@ describe("live progress while a Review runs", () => {
 
     expect(within(config).getByText("Failed")).toBeInTheDocument();
     expect(within(config).getByText(/not valid JSON/)).toBeInTheDocument();
-    expect(screen.getByRole("note")).toHaveTextContent(/1 file failed/i);
-    expect(screen.getByRole("status")).toHaveTextContent("Reviewing: 2 of 2 files done.");
+    expect(screen.getByRole("status")).toHaveTextContent("Reviewing: 2 of 2 files");
 
     stream.send({ type: "complete" });
 
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.getByRole("note")).toHaveTextContent(/1 file failed/i);
     expect(findingTitles(users)).toEqual(["SQL injection", "Swallowed error"]);
   });
 
@@ -574,7 +649,7 @@ describe("live progress while a Review runs", () => {
     expect(stream.readyState).toBe(FakeProgressStream.CLOSED);
     const notice = screen.getByRole("note");
     expect(within(notice).getByText("Unsaved")).toBeInTheDocument();
-    expect(notice).toHaveTextContent("Diffwise couldn't save this Review, so restarting Diffwise will lose it.");
+    expect(notice).toHaveTextContent("This Review has finished but isn't saved. If Diffwise restarts, it is lost.");
     expect(findingTitles(screen.getByRole("region", { name: "src/users.ts" }))).toEqual(["SQL injection", "Swallowed error"]);
   });
 
@@ -632,7 +707,7 @@ describe("live progress while a Review runs", () => {
 
     expect(findingTitles(screen.getByRole("region", { name: "src/users.ts" }))).toEqual(["SQL injection"]);
     expect(within(screen.getByRole("region", { name: "src/config.ts" })).getByText("Reviewing")).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent("Reviewing: 1 of 2 files done.");
+    expect(screen.getByRole("status")).toHaveTextContent("Reviewing: 1 of 2 files");
   });
 
   test("leaving the Review's page stops following the Review", async () => {
@@ -1215,7 +1290,7 @@ test("skipped and failed files show their outcome and reason instead of a diff, 
 
   const notice = screen.getByRole("note");
   expect(notice).toHaveTextContent(/incomplete coverage/i);
-  expect(notice).toHaveTextContent(/1 file skipped/i);
+  expect(notice).toHaveTextContent(/1 file was skipped/i);
   expect(notice).toHaveTextContent(/1 file failed/i);
 });
 

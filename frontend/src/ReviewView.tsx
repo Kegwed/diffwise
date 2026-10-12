@@ -3,7 +3,7 @@ import { SEVERITIES, type FileOutcome, type Finding, type PendingFile, type Revi
 import { DiffView } from "./DiffView.tsx";
 import { FindingsPanel } from "./FindingsPanel.tsx";
 import { matchesFilter, NO_FILTER, type Jump } from "./findings.ts";
-import { Badge, Button } from "./design-system/index.ts";
+import { Badge } from "./design-system/index.ts";
 
 const OUTCOME_LABELS: Record<FileOutcome["outcome"], string> = {
   reviewed: "Reviewed",
@@ -16,22 +16,8 @@ const PENDING_LABELS: Record<PendingFile["state"], string> = {
   reviewing: "Reviewing",
 };
 
-/**
- * Whether the Pull Request's head commit has moved on since a Review ran: not known while the Pull Request is
- * still loading ("checking"), and never once it couldn't be loaded ("unchecked").
- */
-export type OutdatedCheck = "checking" | "outdated" | "not-outdated" | "unchecked";
-
-export interface ReviewViewProps {
-  review: Review;
-  /** Whether the Review is Outdated, as far as that could be checked. */
-  outdated: OutdatedCheck;
-  /** Starts a Review of the Pull Request's latest commit with this Review's Model; none while one can't be started. */
-  onReviewLatest?: () => void;
-}
-
 /** A Review as it stands: complete, or still running with some of its files yet to settle. */
-export function ReviewView({ review, outdated, onReviewLatest }: ReviewViewProps) {
+export function ReviewView({ review }: { review: Review }) {
   const [filter, setFilter] = useState(NO_FILTER);
   const [jump, setJump] = useState<Jump>();
   const byFile = Map.groupBy(review.findings.toSorted(bySeverityThenLine), (finding) => finding.file);
@@ -45,33 +31,6 @@ export function ReviewView({ review, outdated, onReviewLatest }: ReviewViewProps
 
   return (
     <>
-      {outdated === "outdated" && (
-        <div role="note" className="outdated-notice panel-sunken">
-          <Badge>Outdated</Badge>
-          <p>New commits were pushed to this Pull Request since this Review ran, so its Findings may no longer apply.</p>
-          <Button size="sm" onClick={onReviewLatest} disabled={!onReviewLatest}>
-            Review the latest commit
-          </Button>
-        </div>
-      )}
-      {outdated === "unchecked" && (
-        <p role="note" className="panel-sunken">
-          Diffwise couldn't check whether new commits were pushed to this Pull Request since this Review ran, so it may
-          be Outdated.
-        </p>
-      )}
-      {review.status === "unsaved" && (
-        <div role="note" className="unsaved-notice panel-sunken">
-          <Badge>Unsaved</Badge>
-          <p>Diffwise couldn't save this Review, so restarting Diffwise will lose it.</p>
-        </div>
-      )}
-      {running && (
-        <p role="status">
-          Reviewing: {review.fileOutcomes.length} of {review.fileOutcomes.length + review.pendingFiles.length} files done.
-        </p>
-      )}
-      <CoverageNotice fileOutcomes={review.fileOutcomes} />
       {byFile.size === 0 && <p>{running ? "No Findings yet." : "No Findings."}</p>}
       <div className="review-layout">
         {review.findings.length > 0 && (
@@ -109,20 +68,6 @@ export function ReviewView({ review, outdated, onReviewLatest }: ReviewViewProps
         </div>
       </div>
     </>
-  );
-}
-
-function CoverageNotice({ fileOutcomes }: { fileOutcomes: FileOutcome[] }) {
-  const counts = (["skipped", "failed"] as const).flatMap((outcome) => {
-    const count = fileOutcomes.filter((o) => o.outcome === outcome).length;
-    return count > 0 ? [`${count} ${count === 1 ? "file" : "files"} ${outcome}`] : [];
-  });
-  if (counts.length === 0) return null;
-  return (
-    <p role="note" className="panel-sunken">
-      <strong>Incomplete coverage:</strong> {counts.join(", ")}. No Findings in a file that wasn't reviewed doesn't
-      mean it's clean.
-    </p>
   );
 }
 

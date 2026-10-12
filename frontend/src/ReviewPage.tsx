@@ -2,12 +2,18 @@ import { useState } from "react";
 import { isOutdated, type PullRequestDetail, type PullRequestRef, type Review } from "@diffwise/shared";
 import { getPullRequest, startReview } from "./api.ts";
 import { Breadcrumb } from "./Breadcrumb.tsx";
-import { ReviewState } from "./design-system/index.ts";
+import { Button, Notice, ReviewState } from "./design-system/index.ts";
 import { HeadCommit } from "./HeadCommit.tsx";
-import { ReviewView, type OutdatedCheck } from "./ReviewView.tsx";
+import { ReviewView } from "./ReviewView.tsx";
 import { navigate, pullRequestHref, repositoryHref, reviewHref } from "./route.ts";
 import { useFollowedReview } from "./useFollowedReview.ts";
 import { useLoaded, type Reloaded } from "./useLoaded.ts";
+
+/**
+ * Whether the Pull Request's head commit has moved on since a Review ran: not known while the Pull Request is
+ * still loading ("checking"), and never once it couldn't be loaded ("unchecked").
+ */
+type OutdatedCheck = "checking" | "outdated" | "not-outdated" | "unchecked";
 
 /** A Review's own page: the Pull Request it's of, the Model and commit it reviewed, and the Review as it stands, followed live while it runs. */
 export function ReviewPage({ pullRequest, reviewId }: { pullRequest: PullRequestRef; reviewId: string }) {
@@ -69,6 +75,12 @@ export function ReviewPage({ pullRequest, reviewId }: { pullRequest: PullRequest
               <dt>Reviewed commit</dt>
               <dd>
                 <HeadCommit commit={review.headCommit} />
+                {outdated === "outdated" && detail.data && (
+                  <span className="caption">
+                    {" "}
+                    Latest on GitHub: <HeadCommit commit={detail.data.headCommit} />
+                  </span>
+                )}
               </dd>
             </div>
             <div>
@@ -92,17 +104,103 @@ export function ReviewPage({ pullRequest, reviewId }: { pullRequest: PullRequest
             </div>
           </dl>
         )}
+        {review && (
+          <ReviewNotices
+            review={review}
+            outdated={outdated}
+            onReviewLatest={starting || review.status === "running" ? undefined : () => reviewLatest(review)}
+          />
+        )}
       </div>
       {error && <p role="alert">{error}</p>}
-      {review && (
-        <ReviewView
-          review={review}
-          outdated={outdated}
-          onReviewLatest={starting || review.status === "running" ? undefined : () => reviewLatest(review)}
-        />
-      )}
+      {review && <ReviewView review={review} />}
     </section>
   );
+}
+
+/** What the page has to say about the Review as it stands: that it's running, Unsaved, Outdated or not fully covered. */
+function ReviewNotices({
+  review,
+  outdated,
+  onReviewLatest,
+}: {
+  review: Review;
+  outdated: OutdatedCheck;
+  /** Starts a Review of the latest commit with this Review's Model; none while one can't be started. */
+  onReviewLatest?: () => void;
+}) {
+  // Skipped files are never sent to the Model, so they're neither done nor left to do.
+  const toReview = review.fileOutcomes.filter((outcome) => outcome.outcome !== "skipped").length;
+  const total = toReview + review.pendingFiles.length;
+  const failed = review.fileOutcomes.filter((outcome) => outcome.outcome === "failed").length;
+  const skipped = review.fileOutcomes.length - toReview;
+  const reviewed = toReview - failed;
+
+  return (
+    <div className="review-notices">
+      {review.status === "running" && (
+        <Notice role="status" title={`Reviewing: ${toReview} of ${total} files`}>
+          <div
+            className="progress"
+            role="progressbar"
+            aria-label="Review progress"
+            aria-valuemin={0}
+            aria-valuemax={total}
+            aria-valuenow={toReview}
+          >
+            <div className="progress-fill" style={{ width: `${total ? (toReview / total) * 100 : 0}%` }} />
+          </div>
+          <p>Findings appear as each file finishes. If Diffwise restarts, this Review is lost.</p>
+        </Notice>
+      )}
+      {review.status === "unsaved" && (
+        <Notice role="note" title="Unsaved">
+          <p>This Review has finished but isn't saved. If Diffwise restarts, it is lost.</p>
+        </Notice>
+      )}
+      {outdated === "outdated" && (
+        <Notice
+          role="note"
+          title="Outdated"
+          action={
+            <Button variant="primary" onClick={onReviewLatest} disabled={!onReviewLatest}>
+              Review the latest commit
+            </Button>
+          }
+        >
+          <p>
+            New commits were pushed after {review.headCommit.slice(0, 7)}, so these Findings may not apply to the latest
+            commit. A Review of it runs with the same Model, {review.model} on {review.modelProvider}.
+          </p>
+        </Notice>
+      )}
+      {outdated === "unchecked" && (
+        <Notice role="note" title="Couldn't check for new commits">
+          <p>
+            Diffwise couldn't check whether new commits were pushed to this Pull Request since this Review ran, so it may
+            be Outdated.
+          </p>
+        </Notice>
+      )}
+      {review.status !== "running" && (failed > 0 || skipped > 0) && (
+        <Notice role="note" title="Incomplete coverage">
+          <p>
+            {[
+              failed > 0 && `${count(failed, "file")} failed`,
+              skipped > 0 && `${count(skipped, "file")} ${skipped === 1 ? "was" : "were"} skipped`,
+            ]
+              .filter(Boolean)
+              .join(" and ")}
+            , so these Findings cover {reviewed} of {review.fileOutcomes.length} changed files.
+          </p>
+        </Notice>
+      )}
+    </div>
+  );
+}
+
+function count(n: number, noun: string) {
+  return `${n} ${noun}${n === 1 ? "" : "s"}`;
 }
 
 /**
