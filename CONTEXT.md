@@ -15,8 +15,12 @@ A proposed set of code changes to a Repository. The thing Diffwise reviews.
 _Avoid_: PR (in prose), merge request, changeset
 
 **Review**:
-One run of Diffwise over a Pull Request at a specific head commit, using a specific Model, producing a set of Findings. A Review is running until every changed file has its File Outcome and it has been saved, and complete from then on. Reviews are kept, so one Pull Request can have many: a complete Review outlives a restart of Diffwise, unless saving it failed.
+One run of Diffwise over a Pull Request at a specific head commit, using a specific Model, producing a set of Findings. A Review is running until every changed file has its File Outcome and it has been saved, and complete from then on. If saving it fails, it is Unsaved instead. Reviews are kept, so one Pull Request can have many.
 _Avoid_: Analysis, scan, audit
+
+**Unsaved**:
+A Review whose every changed file has its File Outcome but that couldn't be saved. Its Findings can still be read, but a restart of Diffwise loses it.
+_Avoid_: Failed (that's a File Outcome), lost
 
 **Outdated**:
 A Review whose head commit is no longer the Pull Request's head commit, because new commits were pushed since it ran. Its Findings are not carried forward.
