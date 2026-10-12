@@ -97,11 +97,9 @@ function findingTitles(file: HTMLElement) {
     .map((finding) => within(finding).getByRole("heading", { level: 4 }).textContent);
 }
 
-/** The diff's rows of code (not the rows holding Findings), each with its old and new line number cells. */
+/** The diff's rows: hunk headers, then each line with its old and new line number cells. */
 function codeRows(file: HTMLElement) {
-  return within(file)
-    .getAllByRole("row")
-    .filter((row) => within(row).queryByRole("article") === null);
+  return within(file).getAllByRole("row");
 }
 
 /** The code row showing a line of the new version of the file. */
@@ -109,17 +107,6 @@ function newLineRow(file: HTMLElement, newLine: number) {
   const row = codeRows(file).find((r) => (r as HTMLTableRowElement).cells[1]?.textContent === String(newLine));
   if (!row) throw new Error(`No row for new line ${newLine}`);
   return row as HTMLTableRowElement;
-}
-
-/** The titles of the Findings shown directly beneath a line of the new version of the file, in order. */
-function findingsBeneath(file: HTMLElement, newLine: number) {
-  const titles: (string | null)[] = [];
-  for (let row = newLineRow(file, newLine).nextElementSibling; row; row = row.nextElementSibling) {
-    const finding = within(row as HTMLElement).queryByRole("article");
-    if (!finding) break;
-    titles.push(within(finding).getByRole("heading", { level: 4 }).textContent);
-  }
-  return titles;
 }
 
 const createdGitHubApp: GitHubAppStatus = {
@@ -515,7 +502,7 @@ describe("browsing to a Pull Request", () => {
   });
 });
 
-test("reviewing a fixture Pull Request shows each file's diff with every Finding beneath its lines", async () => {
+test("reviewing a fixture Pull Request shows each file's diff with its Findings beside it", async () => {
   const fetch = stubApi();
   await startReview();
 
@@ -528,18 +515,15 @@ test("reviewing a fixture Pull Request shows each file's diff with every Finding
   );
 
   const users = await screen.findByRole("region", { name: "src/users.ts" });
-  expect(findingsBeneath(users, 3)).toEqual(["SQL injection"]);
-  expect(findingsBeneath(users, 6)).toEqual(["Swallowed error"]);
-  expect(findingsBeneath(users, 5)).toEqual([]);
+  expect(within(users).getByRole("table", { name: "Diff of src/users.ts" })).toBeInTheDocument();
+  expect(findingTitles(users)).toEqual(["SQL injection", "Swallowed error"]);
   expect(within(users).getByText("CWE-89")).toBeInTheDocument();
-  expect(within(users).getByText("src/users.ts:3")).toBeInTheDocument();
-  expect(within(users).getByText("src/users.ts:5–6")).toBeInTheDocument();
+  expect(within(users).getByRole("button", { name: "src/users.ts:3" })).toBeInTheDocument();
+  expect(within(users).getByRole("button", { name: "src/users.ts:5–6" })).toBeInTheDocument();
   expect(within(users).getByText("The name is interpolated straight into the SQL string.")).toBeInTheDocument();
   expect(within(users).getByText("Suggested Fix")).toBeInTheDocument();
 
-  const config = screen.getByRole("region", { name: "src/config.ts" });
-  expect(findingsBeneath(config, 1)).toEqual([]);
-  expect(findingsBeneath(config, 2)).toEqual(["Magic number"]);
+  expect(findingTitles(screen.getByRole("region", { name: "src/config.ts" }))).toEqual(["Magic number"]);
 });
 
 test("the diff is GitHub-style: hunk headers, then each line with its old and new line numbers and its marker", async () => {
@@ -570,7 +554,7 @@ test("a started Review's page says which Model reviewed which commit", async () 
   await waitFor(() => expect(details(page)).toMatchObject({ "Reviewed commit": "abc1234", Model: "llama3.1:8b on Ollama" }));
 });
 
-test("Findings beneath the same line are stacked by Severity, highest first, then by line", async () => {
+test("a file's Findings are ordered by Severity, highest first, then by line", async () => {
   const finding = review.findings[1]!;
   stubApi({
     ...review,
@@ -585,10 +569,10 @@ test("Findings beneath the same line are stacked by Severity, highest first, the
   await startReview();
 
   const config = await screen.findByRole("region", { name: "src/config.ts" });
-  expect(findingsBeneath(config, 2)).toEqual(["Critical at 2", "Medium at 1–2", "Medium at 2", "Low at 2"]);
+  expect(findingTitles(config)).toEqual(["Critical at 2", "Medium at 1–2", "Medium at 2", "Low at 2"]);
 });
 
-test("Findings on lines the diff doesn't show are listed after it, by Severity, highest first, then by line", async () => {
+test("Findings on lines the diff doesn't show are listed with the file's others, by Severity, then by line", async () => {
   const finding = review.findings[1]!;
   stubApi({
     ...review,
@@ -603,9 +587,7 @@ test("Findings on lines the diff doesn't show are listed after it, by Severity, 
   await startReview();
 
   const config = await screen.findByRole("region", { name: "src/config.ts" });
-  expect(findingsBeneath(config, 1)).toEqual(["Low at 1"]);
-  expect(within(config).getByText(/on lines this diff doesn't show/i)).toBeInTheDocument();
-  expect(findingTitles(config)).toEqual(["Low at 1", "Critical at 20", "High at 4", "High at 9"]);
+  expect(findingTitles(config)).toEqual(["Critical at 20", "High at 4", "High at 9", "Low at 1"]);
 });
 
 describe("live progress while a Review runs", () => {
@@ -655,8 +637,7 @@ describe("live progress while a Review runs", () => {
     });
 
     expect(within(users).getByText("Reviewed")).toBeInTheDocument();
-    expect(findingsBeneath(users, 3)).toEqual(["SQL injection"]);
-    expect(findingsBeneath(users, 6)).toEqual(["Swallowed error"]);
+    expect(findingTitles(users)).toEqual(["SQL injection", "Swallowed error"]);
     expect(within(config).getByText("Queued")).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("Reviewing: 1 of 2 files");
     expect(screen.queryByText(/no findings/i)).not.toBeInTheDocument();
@@ -739,7 +720,7 @@ describe("live progress while a Review runs", () => {
     });
 
     expect(stream.url).toBe("/api/reviews/review-1/events");
-    expect(findingsBeneath(screen.getByRole("region", { name: "src/users.ts" }), 3)).toEqual(["SQL injection"]);
+    expect(findingTitles(screen.getByRole("region", { name: "src/users.ts" }))).toEqual(["SQL injection"]);
     const config = screen.getByRole("region", { name: "src/config.ts" });
     expect(within(config).getByText("Reviewing")).toBeInTheDocument();
 
@@ -749,7 +730,7 @@ describe("live progress while a Review runs", () => {
       findings: [magicNumber],
     });
 
-    expect(findingsBeneath(config, 2)).toEqual(["Magic number"]);
+    expect(findingTitles(config)).toEqual(["Magic number"]);
   });
 
   test("when the stream reconnects, the Review as it then stands replaces what the page had", async () => {
@@ -1100,71 +1081,70 @@ describe("a Pull Request's Reviews", () => {
   });
 });
 
-describe("the Findings panel", () => {
-  /** Starts the Review and gives its Findings panel, next to the diff. */
-  async function openPanel(startedReview: Review = review) {
+describe("filtering Findings and jumping to their lines", () => {
+  /** Starts the Review and gives the filters above its files. */
+  async function openFilters(startedReview: Review = review) {
     stubApi(startedReview);
     await startReview();
-    return screen.findByRole("complementary", { name: "Findings" });
+    return screen.findByRole("region", { name: "Filter Findings" });
   }
 
-  /** What each button of one of the panel's filters says, in order: what it filters by, then its count of Findings. */
-  function filterButtons(panel: HTMLElement, filter: string) {
-    return within(within(panel).getByRole("group", { name: filter }))
+  /** What each button of one of the filters says, in order: what it filters by, then its count of Findings. */
+  function filterButtons(filters: HTMLElement, filter: string) {
+    return within(within(filters).getByRole("group", { name: filter }))
       .getAllByRole("button")
       .map((button) => button.textContent);
   }
 
-  /** What each Finding in the panel's list says, in order. */
-  function listedFindings(panel: HTMLElement) {
-    return within(within(panel).getByRole("list"))
-      .getAllByRole("listitem")
-      .map((finding) => finding.textContent);
+  /** The new line numbers of the diff's rows that a shown Finding covers. */
+  function markedLines(file: HTMLElement) {
+    return codeRows(file)
+      .filter((row) => row.classList.contains("diff-marked"))
+      .map((row) => (row as HTMLTableRowElement).cells[1]?.textContent);
   }
 
-  test("the panel shows how many Findings the Review reports of each kind and of each Severity", async () => {
-    const panel = await openPanel();
+  test("the filters count the Findings the Review reports of each kind and of each Severity", async () => {
+    const filters = await openFilters();
 
-    expect(filterButtons(panel, "Kind")).toEqual(["Security Issue 1", "Bad Practices 2"]);
-    expect(filterButtons(panel, "Severity")).toEqual(["Critical 1", "High 0", "Medium 1", "Low 1"]);
+    expect(filterButtons(filters, "Kind")).toEqual(["Security Issue 1", "Bad Practices 2"]);
+    expect(filterButtons(filters, "Severity")).toEqual(["Critical 1", "High 0", "Medium 1", "Low 1"]);
   });
 
-  test("the panel lists the Findings in the order the diff shows them, each with its Severity, title and lines", async () => {
-    const panel = await openPanel();
+  test("the lines each shown Finding covers are marked in its file's diff", async () => {
+    await openFilters();
 
-    expect(listedFindings(panel)).toEqual([
-      "Critical SQL injection src/users.ts:3",
-      "Medium Swallowed error src/users.ts:5–6",
-      "Low Magic number src/config.ts:1–2",
-    ]);
+    expect(markedLines(screen.getByRole("region", { name: "src/users.ts" }))).toEqual(["3", "5", "6"]);
+    expect(markedLines(screen.getByRole("region", { name: "src/config.ts" }))).toEqual(["1", "2"]);
   });
 
-  test("filtering by kind hides the Findings of the other kind, in the panel and in the diff", async () => {
-    const panel = await openPanel();
-    const securityIssues = within(panel).getByRole("button", { name: /security issue/i });
+  test("filtering by kind hides the other kind's Findings and their marks, and says what a file has hidden", async () => {
+    const filters = await openFilters();
+    const securityIssues = within(filters).getByRole("button", { name: /security issue/i });
     expect(securityIssues).toHaveAttribute("aria-pressed", "false");
 
     await userEvent.click(securityIssues);
 
     expect(securityIssues).toHaveAttribute("aria-pressed", "true");
-    expect(listedFindings(panel)).toEqual(["Critical SQL injection src/users.ts:3"]);
-    expect(findingTitles(screen.getByRole("region", { name: "src/users.ts" }))).toEqual(["SQL injection"]);
+    const users = screen.getByRole("region", { name: "src/users.ts" });
+    expect(findingTitles(users)).toEqual(["SQL injection"]);
+    expect(markedLines(users)).toEqual(["3"]);
     const config = screen.getByRole("region", { name: "src/config.ts" });
     expect(within(config).queryByRole("article")).not.toBeInTheDocument();
+    expect(markedLines(config)).toEqual([]);
+    expect(config).toHaveTextContent("1 Finding hidden by the filters above.");
     expect(within(config).getByRole("table", { name: "Diff of src/config.ts" })).toBeInTheDocument();
     // The counts stay the Review's, whatever is hidden.
-    expect(filterButtons(panel, "Kind")).toEqual(["Security Issue 1", "Bad Practices 2"]);
+    expect(filterButtons(filters, "Kind")).toEqual(["Security Issue 1", "Bad Practices 2"]);
 
     await userEvent.click(securityIssues);
 
     expect(securityIssues).toHaveAttribute("aria-pressed", "false");
-    expect(listedFindings(panel)).toHaveLength(3);
-    expect(findingsBeneath(config, 2)).toEqual(["Magic number"]);
+    expect(findingTitles(config)).toEqual(["Magic number"]);
   });
 
   test("filtering by Severity hides the Findings of the other Severities, and narrows the kind filter further", async () => {
-    const panel = await openPanel();
-    const severities = within(panel).getByRole("group", { name: "Severity" });
+    const filters = await openFilters();
+    const severities = within(filters).getByRole("group", { name: "Severity" });
     const users = screen.getByRole("region", { name: "src/users.ts" });
     const config = screen.getByRole("region", { name: "src/config.ts" });
 
@@ -1173,27 +1153,15 @@ describe("the Findings panel", () => {
 
     expect(within(severities).getByRole("button", { name: /critical/i })).toHaveAttribute("aria-pressed", "true");
     expect(within(severities).getByRole("button", { name: /medium/i })).toHaveAttribute("aria-pressed", "false");
-    expect(listedFindings(panel)).toEqual(["Critical SQL injection src/users.ts:3", "Low Magic number src/config.ts:1–2"]);
     expect(findingTitles(users)).toEqual(["SQL injection"]);
-    expect(findingsBeneath(config, 2)).toEqual(["Magic number"]);
-    expect(filterButtons(panel, "Severity")).toEqual(["Critical 1", "High 0", "Medium 1", "Low 1"]);
+    expect(findingTitles(config)).toEqual(["Magic number"]);
+    expect(filterButtons(filters, "Severity")).toEqual(["Critical 1", "High 0", "Medium 1", "Low 1"]);
 
-    await userEvent.click(within(panel).getByRole("button", { name: /bad practice/i }));
+    await userEvent.click(within(filters).getByRole("button", { name: /bad practice/i }));
 
-    expect(listedFindings(panel)).toEqual(["Low Magic number src/config.ts:1–2"]);
     expect(within(users).queryByRole("article")).not.toBeInTheDocument();
-    expect(findingsBeneath(config, 2)).toEqual(["Magic number"]);
-  });
-
-  test("when the filters hide every Finding, the panel says so", async () => {
-    const panel = await openPanel();
-
-    await userEvent.click(within(panel).getByRole("button", { name: /security issue/i }));
-    await userEvent.click(within(panel).getByRole("button", { name: /low/i }));
-
-    expect(within(panel).getByText("No Findings match the filters.")).toBeInTheDocument();
-    expect(within(panel).queryByRole("list")).not.toBeInTheDocument();
-    expect(screen.queryByRole("article")).not.toBeInTheDocument();
+    expect(users).toHaveTextContent("2 Findings hidden by the filters above.");
+    expect(findingTitles(config)).toEqual(["Magic number"]);
   });
 
   describe("jumping to a Finding", () => {
@@ -1213,28 +1181,30 @@ describe("the Findings panel", () => {
       return scrolledTo;
     }
 
-    /** The new line numbers of the diff's highlighted rows of code. */
+    /** The new line numbers of the diff's rows highlighted as the lines jumped to. */
     function highlightedLines(file: HTMLElement) {
       return codeRows(file)
         .filter((row) => row.classList.contains("diff-highlighted"))
         .map((row) => (row as HTMLTableRowElement).cells[1]?.textContent);
     }
 
-    test("clicking a Finding in the panel scrolls the diff to its lines and highlights them", async () => {
+    test("clicking a Finding's location scrolls its diff to its lines, highlights them and focuses the first", async () => {
       const scrolledTo = stubScrolling();
-      const panel = await openPanel();
+      await openFilters();
       const users = screen.getByRole("region", { name: "src/users.ts" });
       const config = screen.getByRole("region", { name: "src/config.ts" });
-      const swallowedError = within(panel).getByRole("button", { name: /swallowed error/i });
+      const swallowedError = within(users).getByRole("button", { name: "src/users.ts:5–6" });
       expect(highlightedLines(users)).toEqual([]);
 
       await userEvent.click(swallowedError);
 
       expect(scrolledTo).toEqual([newLineRow(users, 5)]);
+      expect(newLineRow(users, 5)).toHaveFocus();
       expect(highlightedLines(users)).toEqual(["5", "6"]);
       expect(swallowedError).toHaveAttribute("aria-current", "true");
+      expect(swallowedError.closest("article")).toHaveClass("is-shown");
 
-      await userEvent.click(within(panel).getByRole("button", { name: /magic number/i }));
+      await userEvent.click(within(config).getByRole("button", { name: "src/config.ts:1–2" }));
 
       expect(scrolledTo).toEqual([newLineRow(users, 5), newLineRow(config, 1)]);
       expect(highlightedLines(config)).toEqual(["1", "2"]);
@@ -1244,11 +1214,11 @@ describe("the Findings panel", () => {
 
     test("clicking the same Finding again scrolls back to its lines", async () => {
       const scrolledTo = stubScrolling();
-      const panel = await openPanel();
+      await openFilters();
       const users = screen.getByRole("region", { name: "src/users.ts" });
 
-      await userEvent.click(within(panel).getByRole("button", { name: /sql injection/i }));
-      await userEvent.click(within(panel).getByRole("button", { name: /sql injection/i }));
+      await userEvent.click(within(users).getByRole("button", { name: "src/users.ts:3" }));
+      await userEvent.click(within(users).getByRole("button", { name: "src/users.ts:3" }));
 
       expect(scrolledTo).toEqual([newLineRow(users, 3), newLineRow(users, 3)]);
       expect(highlightedLines(users)).toEqual(["3"]);
@@ -1256,14 +1226,14 @@ describe("the Findings panel", () => {
 
     test("a Finding on lines the diff doesn't show is scrolled to itself", async () => {
       const scrolledTo = stubScrolling();
-      const panel = await openPanel({
+      await openFilters({
         ...review,
         fileOutcomes: [{ file: "src/config.ts", outcome: "reviewed", patch: configPatch }],
         findings: [{ ...review.findings[1]!, startLine: 9, endLine: 9, title: "Past the end" }],
       });
       const config = screen.getByRole("region", { name: "src/config.ts" });
 
-      await userEvent.click(within(panel).getByRole("button", { name: /past the end/i }));
+      await userEvent.click(within(config).getByRole("button", { name: "src/config.ts:9" }));
 
       expect(scrolledTo).toHaveLength(1);
       expect(scrolledTo[0]).toContainElement(within(config).getByRole("article"));
@@ -1273,12 +1243,12 @@ describe("the Findings panel", () => {
 
     test("the lines of a Finding the filters then hide are no longer highlighted", async () => {
       stubScrolling();
-      const panel = await openPanel();
+      const filters = await openFilters();
       const users = screen.getByRole("region", { name: "src/users.ts" });
-      await userEvent.click(within(panel).getByRole("button", { name: /swallowed error/i }));
+      await userEvent.click(within(users).getByRole("button", { name: "src/users.ts:5–6" }));
       expect(highlightedLines(users)).toEqual(["5", "6"]);
 
-      await userEvent.click(within(panel).getByRole("button", { name: /security issue/i }));
+      await userEvent.click(within(filters).getByRole("button", { name: /security issue/i }));
 
       expect(highlightedLines(users)).toEqual([]);
     });
@@ -1303,7 +1273,7 @@ test.each([
     "1+export const timeout = 30000;",
     "2+export const retries = 3;",
   ]);
-  expect(within(config).getByText(/on lines this diff doesn't show/i)).toBeInTheDocument();
+  expect(findingTitles(config)).toEqual(["Past the end"]);
 });
 
 test("a Review saved before diffs were kept lists each file's Findings without a diff", async () => {

@@ -130,3 +130,18 @@ test("a Notice names the situation, says what it means, and offers its one actio
   await userEvent.click(within(notice).getByRole("button", { name: "Review the latest commit" }));
   expect(onClick).toHaveBeenCalledOnce();
 });
+
+test("beside a diff, a Finding's location is a button to its lines, current when its lines are the ones shown", async () => {
+  const onShowLines = vi.fn();
+  const { rerender } = render(
+    <Finding kind="bad-practice" severity="low" title="Magic number" file="src/config.ts" lines="1–2" onShowLines={onShowLines} />,
+  );
+
+  const location = screen.getByRole("button", { name: "src/config.ts:1–2" });
+  expect(location).not.toHaveAttribute("aria-current");
+  await userEvent.click(location);
+  expect(onShowLines).toHaveBeenCalledOnce();
+
+  rerender(<Finding kind="bad-practice" severity="low" title="Magic number" file="src/config.ts" lines="1–2" onShowLines={onShowLines} linesShown />);
+  expect(screen.getByRole("button", { name: "src/config.ts:1–2" })).toHaveAttribute("aria-current", "true");
+});

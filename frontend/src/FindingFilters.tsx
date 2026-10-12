@@ -1,33 +1,30 @@
 import type { ReactNode } from "react";
 import { SEVERITIES, type Finding } from "@diffwise/shared";
 import { Badge, Button, Severity } from "./design-system/index.ts";
-import { KINDS_BY_PRIORITY, kindLabel, lineRange, matchesFilter, type FindingFilter } from "./findings.ts";
+import { KINDS_BY_PRIORITY, kindLabel, type FindingFilter } from "./findings.ts";
 
 /** Highest first, as the design system sorts by Severity. */
 const SEVERITIES_HIGHEST_FIRST = SEVERITIES.toReversed();
 
-export interface FindingsPanelProps {
-  /** Every Finding of the Review, in the order the diff shows them. */
+export interface FindingFiltersProps {
+  /** Every Finding of the Review: the counts are the Review's, whatever is hidden. */
   findings: Finding[];
-  /** The filter the diff applies too. */
   filter: FindingFilter;
   /** Changes the filter from what it is by then, so toggles in quick succession each count. */
   onFilter: (change: (filter: FindingFilter) => FindingFilter) => void;
-  /** The Finding the diff was last jumped to, if any. */
-  jumpedTo?: Finding;
-  onJump: (finding: Finding) => void;
 }
 
 /**
- * The overview of a Review's Findings beside its diff: how many it reports of each kind and of each Severity, each
- * count a button that filters by it, then the Findings the filter shows, each a button that jumps to it in the diff.
+ * How many Findings the Review reports of each kind and of each Severity, each count a toggle that narrows the
+ * Findings shown to it. With nothing pressed, every Finding is shown.
  */
-export function FindingsPanel({ findings, filter, onFilter, jumpedTo, onJump }: FindingsPanelProps) {
-  const shown = findings.filter((finding) => matchesFilter(finding, filter));
+export function FindingFilters({ findings, filter, onFilter }: FindingFiltersProps) {
   return (
-    <aside aria-labelledby="findings" className="findings-panel">
-      <h3 id="findings">Findings</h3>
+    <section aria-label="Filter Findings" className="card finding-filters">
       <div role="group" aria-label="Kind" className="filter">
+        <span className="filter-label" aria-hidden="true">
+          Kind
+        </span>
         {KINDS_BY_PRIORITY.map((kind) => {
           const count = findings.filter((finding) => finding.kind === kind).length;
           return (
@@ -43,6 +40,9 @@ export function FindingsPanel({ findings, filter, onFilter, jumpedTo, onJump }: 
         })}
       </div>
       <div role="group" aria-label="Severity" className="filter">
+        <span className="filter-label" aria-hidden="true">
+          Severity
+        </span>
         {SEVERITIES_HIGHEST_FIRST.map((severity) => (
           <FilterButton
             key={severity}
@@ -54,30 +54,7 @@ export function FindingsPanel({ findings, filter, onFilter, jumpedTo, onJump }: 
           </FilterButton>
         ))}
       </div>
-      {shown.length === 0 ? (
-        <p className="caption">No Findings match the filters.</p>
-      ) : (
-        <ol className="finding-links">
-          {shown.map((finding, i) => (
-            <li key={i}>
-              <button
-                type="button"
-                className="finding-link"
-                aria-current={finding === jumpedTo ? "true" : undefined}
-                onClick={() => onJump(finding)}
-              >
-                <Severity severity={finding.severity} /> <span className="finding-link-title">{finding.title}</span>{" "}
-                <span className="caption">
-                  <code>
-                    {finding.file}:{lineRange(finding)}
-                  </code>
-                </span>
-              </button>
-            </li>
-          ))}
-        </ol>
-      )}
-    </aside>
+    </section>
   );
 }
 

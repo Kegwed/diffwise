@@ -35,6 +35,10 @@
 .dw-finding { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); overflow: hidden; max-width: 720px; }
 .dw-finding-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-4) 0; }
 .dw-finding-loc { margin-left: auto; font-family: var(--font-mono); font-size: 12px; line-height: 16px; color: var(--ink-muted); }
+.dw-finding-loc-btn { min-height: 28px; padding: 0 var(--space-1); margin-right: calc(-1 * var(--space-1)); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--accent); cursor: pointer; }
+.dw-finding-loc-btn:hover { text-decoration: underline; }
+.dw-finding-loc-btn:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus-ring); }
+.dw-finding.is-shown { box-shadow: 0 0 0 2px var(--accent); }
 .dw-finding-body { padding: var(--space-2) var(--space-4) var(--space-3); }
 .dw-finding-title { margin: 0; font-size: 16px; line-height: 24px; font-weight: 600; color: var(--ink); }
 .dw-finding-text { margin-top: var(--space-1); max-width: 64ch; color: var(--ink); }
