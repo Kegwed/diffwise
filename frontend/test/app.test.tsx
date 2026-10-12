@@ -323,6 +323,74 @@ describe("a Review's page", () => {
     expect(details(page)).toMatchObject({ "Reviewed commit": "0ld5678 Latest on GitHub: abc1234", State: "Outdated" });
   });
 
+  test("each file the Model was given has its own part of the page: its outcome, its Finding count, and its diff once reviewed", async () => {
+    stubApi();
+    const progress = stubProgressStream();
+    window.location.hash = "#/acme/shop/pull/7/reviews/review-1";
+    render(<App />);
+
+    (await progress.followed()).send({
+      type: "review",
+      review: {
+        ...review,
+        status: "running",
+        fileOutcomes: [
+          { file: "src/users.ts", outcome: "reviewed", patch: usersPatch },
+          { file: "src/config.ts", outcome: "reviewed", patch: configPatch },
+          { file: "src/report.ts", outcome: "failed", reason: "Failed twice. First attempt: the Model call timed out after 120s." },
+        ],
+        pendingFiles: [
+          { file: "src/orders.ts", state: "reviewing" },
+          { file: "src/cart.ts", state: "queued" },
+        ],
+        findings: [review.findings[0]!, review.findings[2]!],
+      },
+    });
+
+    const users = screen.getByRole("region", { name: "src/users.ts" });
+    expect(within(users).getByRole("heading", { level: 3 })).toHaveTextContent("src/users.ts");
+    expect(within(users).getByText("Reviewed")).toBeInTheDocument();
+    expect(within(users).getByText("2 Findings")).toBeInTheDocument();
+
+    const config = screen.getByRole("region", { name: "src/config.ts" });
+    expect(within(config).getByText("No Findings")).toBeInTheDocument();
+    expect(within(config).getByRole("table", { name: "Diff of src/config.ts" })).toBeInTheDocument();
+    expect(within(config).getByText("No Findings in the lines this file changes.")).toBeInTheDocument();
+
+    const report = screen.getByRole("region", { name: "src/report.ts" });
+    expect(within(report).getByText("Failed")).toBeInTheDocument();
+    expect(report).toHaveTextContent("Failed twice. First attempt: the Model call timed out after 120s.");
+
+    expect(screen.getByRole("region", { name: "src/orders.ts" })).toHaveTextContent(
+      "Reviewing now. Findings for this file appear when the Model finishes it.",
+    );
+    expect(screen.getByRole("region", { name: "src/cart.ts" })).toHaveTextContent("Queued.");
+  });
+
+  test("skipped files are listed once, at the end, each with why it was skipped", async () => {
+    stubApi({
+      ...review,
+      fileOutcomes: [
+        { file: "package-lock.json", outcome: "skipped", reason: "Lockfile" },
+        { file: "src/users.ts", outcome: "reviewed", patch: usersPatch },
+        { file: "dist/app.min.js", outcome: "skipped", reason: "Minified asset" },
+        { file: "src/config.ts", outcome: "reviewed", patch: configPatch },
+      ],
+    });
+    window.location.hash = "#/acme/shop/pull/7/reviews/review-1";
+    render(<App />);
+
+    const skipped = await screen.findByRole("region", { name: "Skipped files" });
+    expect(
+      within(within(skipped).getByRole("list"))
+        .getAllByRole("listitem")
+        .map((item) => item.textContent),
+    ).toEqual(["package-lock.jsonSkippedLockfile", "dist/app.min.jsSkippedMinified asset"]);
+    expect(screen.queryByRole("region", { name: "package-lock.json" })).not.toBeInTheDocument();
+    const regions = screen.getAllByRole("region").map((region) => region.getAttribute("aria-label") ?? region.textContent);
+    expect(regions.indexOf("src/config.ts")).toBeLessThan(regions.findIndex((name) => /skipped files/i.test(name ?? "")));
+  });
+
   test("a Review with skipped or failed files says how many of the changed files its Findings cover", async () => {
     stubApi({
       ...review,
@@ -577,7 +645,7 @@ describe("live progress while a Review runs", () => {
     expect(within(users).getByText("Reviewing")).toHaveClass("dw-badge-neutral");
     expect(within(config).getByText("Queued")).toHaveClass("dw-badge-outline");
     expect(screen.getByRole("status")).toHaveTextContent("Reviewing: 0 of 2 files");
-    expect(screen.getByText("No Findings yet.")).toBeInTheDocument();
+    expect(details(await openedReview())).toMatchObject({ Findings: "0 so far" });
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
 
     stream.send({
@@ -1254,11 +1322,14 @@ test("a Review saved before diffs were kept lists each file's Findings without a
   expect(findingTitles(users)).toEqual(["SQL injection", "Swallowed error"]);
 });
 
-test("a Review with no Findings says so", async () => {
+test("a Review with no Findings says so, for itself and for each file", async () => {
   stubApi({ ...review, findings: [] });
   await startReview();
 
-  expect(await screen.findByText(/no findings/i)).toBeInTheDocument();
+  await waitFor(async () => expect(details(await openedReview())).toMatchObject({ Findings: "0" }));
+  for (const file of ["src/users.ts", "src/config.ts"]) {
+    expect(screen.getByRole("region", { name: file })).toHaveTextContent("No Findings in the lines this file changes.");
+  }
   expect(screen.queryByRole("complementary", { name: "Findings" })).not.toBeInTheDocument();
 });
 
@@ -1278,10 +1349,10 @@ test("skipped and failed files show their outcome and reason instead of a diff, 
   expect(within(users).getByText("Reviewed")).toHaveClass("dw-badge-outline");
   expect(within(users).getByRole("table", { name: "Diff of src/users.ts" })).toBeInTheDocument();
 
-  const lockfile = screen.getByRole("region", { name: "package-lock.json" });
-  expect(within(lockfile).getByText("Skipped")).toHaveClass("dw-badge-neutral");
-  expect(within(lockfile).getByText("Lockfile")).toBeInTheDocument();
-  expect(within(lockfile).queryByRole("table")).not.toBeInTheDocument();
+  const skipped = screen.getByRole("region", { name: "Skipped files" });
+  expect(within(skipped).getByText("Skipped")).toHaveClass("dw-badge-neutral");
+  expect(within(skipped).getByText("Lockfile")).toBeInTheDocument();
+  expect(within(skipped).queryByRole("table")).not.toBeInTheDocument();
 
   const report = screen.getByRole("region", { name: "src/report.ts" });
   expect(within(report).getByText("Failed")).toHaveClass("dw-badge-neutral");
