@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, test } from "vitest";
-import { Badge, Button, Finding, Severity } from "../src/design-system/index.ts";
+import { Badge, Button, ConnectionStatus, Finding, Severity } from "../src/design-system/index.ts";
 
 test.each([
   ["critical", "Critical", 4],
@@ -90,4 +90,17 @@ test("Badge is neutral by default", () => {
   render(<Badge>Skipped</Badge>);
 
   expect(screen.getByText("Skipped")).toHaveClass("dw-badge", "dw-badge-neutral");
+});
+
+test("a ConnectionStatus reads without colour: its text says the state, and its dot is hidden from screen readers", () => {
+  const { container } = render(
+    <ul aria-label="Connections">
+      <li>
+        <ConnectionStatus status="error">GitHub unreachable</ConnectionStatus>
+      </li>
+    </ul>,
+  );
+
+  expect(screen.getByRole("listitem")).toHaveTextContent(/^GitHub unreachable$/);
+  expect(container.querySelector(".dw-conn-dot")).toHaveAttribute("aria-hidden", "true");
 });

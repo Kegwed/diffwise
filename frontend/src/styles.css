@@ -8,23 +8,71 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-main {
-  max-width: 960px;
+/* The page frame: the header's row and the view below it share one width and gutter. */
+main,
+.app-header-in {
+  max-width: 1440px;
   margin: 0 auto;
-  padding: var(--space-8) var(--space-6);
+  padding-inline: var(--space-8);
 }
 
-@media (max-width: 640px) {
+main {
+  padding-block: var(--space-8);
+}
+
+@media (max-width: 900px) {
+  main,
+  .app-header-in {
+    padding-inline: var(--space-4);
+  }
+
   main {
-    padding: var(--space-6) var(--space-4);
+    padding-block: var(--space-6);
   }
 }
 
-/* The name set as the logo: title type with the logo's -0.02em tracking. */
-h1 {
-  margin: 0 0 var(--space-8);
-  font: var(--type-title);
+.app-header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+/* Wraps rather than overflows: on a phone the connection statuses drop below the name. */
+.app-header-in {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3) var(--space-6);
+  padding-block: var(--space-3);
+}
+
+/* The name set as the logo: SemiBold with -0.02em tracking, in ink. */
+.brand {
+  margin: 0;
+  font-size: 18px;
+  line-height: 24px;
+  font-weight: 600;
   letter-spacing: -0.02em;
+}
+
+.brand a {
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.brand a:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
+}
+
+.connections {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-6);
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
 h2 {
@@ -206,9 +254,6 @@ a {
 
 /* A Review's files, with the Findings panel beside them once the page is wide enough for both. */
 
-main:has(.findings-panel) {
-  max-width: 1280px;
-}
 
 .review-layout {
   display: grid;

@@ -1,13 +1,20 @@
+import { useEffect } from "react";
 import { getGitHubApp, listRepositories } from "./api.ts";
 import { GitHubConnection } from "./GitHubConnection.tsx";
 import { PullRequestUrlForm } from "./PullRequestUrlForm.tsx";
 import { repositoryHref } from "./route.ts";
 import { useLoaded } from "./useLoaded.ts";
 
-/** The first view: the Repositories the GitHub App is installed on, each leading to its open Pull Requests. */
-export function RepositoriesView() {
+/**
+ * The first view: the Repositories the GitHub App is installed on, each leading to its open Pull Requests. Says
+ * through `onGitHubReachable` whether GitHub could list them, the only place that's known without asking GitHub again.
+ */
+export function RepositoriesView({ onGitHubReachable }: { onGitHubReachable: (reachable: boolean) => void }) {
   const githubApp = useLoaded(getGitHubApp);
   const listing = useLoaded(listRepositories);
+  const unlisted = Boolean(listing.data?.unlisted);
+
+  useEffect(() => onGitHubReachable(!unlisted), [unlisted]);
 
   return (
     <>
