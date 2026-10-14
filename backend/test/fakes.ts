@@ -1,7 +1,7 @@
 import type { RepositoryRef } from "@diffwise/shared";
 import type { ChatRequest, ModelProvider } from "../src/model-provider.ts";
-import { fixtureForge } from "../src/fixture-forge.ts";
-import { ForgeAccessError, type Forge, type PullRequestSnapshot } from "../src/forge.ts";
+import { fixtureForge, type FixturePullRequest } from "../src/fixture-forge.ts";
+import { ForgeAccessError, type Forge } from "../src/forge.ts";
 import type { Reviews } from "../src/reviews.ts";
 
 /** Scripts a Model call that never answers, until the request's signal aborts it. */
@@ -66,7 +66,7 @@ export interface FakeForgeOptions {
 }
 
 /** Serves the given Pull Requests like the fixture Forge, except in Repositories the GitHub App isn't installed on. */
-export function fakeForge(pullRequests: PullRequestSnapshot[], { notInstalledOn = [] }: FakeForgeOptions = {}): Forge {
+export function fakeForge(pullRequests: FixturePullRequest[], { notInstalledOn = [] }: FakeForgeOptions = {}): Forge {
   const forge = fixtureForge(pullRequests);
   const installed = ({ owner, repo }: RepositoryRef) => !notInstalledOn.includes(`${owner}/${repo}`);
   function requireInstalled(repository: RepositoryRef) {

@@ -1,7 +1,7 @@
 import type { ModelChoice, PullRequestRef, Review, ReviewEvent } from "@diffwise/shared";
 import { openDatabase, type Database } from "../src/db.ts";
-import { fixtureForge } from "../src/fixture-forge.ts";
-import type { Forge, PullRequestSnapshot } from "../src/forge.ts";
+import { fixtureForge, type FixturePullRequest } from "../src/fixture-forge.ts";
+import type { Forge } from "../src/forge.ts";
 import type { ModelProvider } from "../src/model-provider.ts";
 import { createReviews, type Reviews } from "../src/reviews.ts";
 import { fakeModelProvider, type FakeModelProviderOptions } from "./fakes.ts";
@@ -15,7 +15,7 @@ export const usersPatch = [
 ].join("\n");
 
 /** A Pull Request that changes one file, adding a SQL injection on line 3. */
-export const pullRequest: PullRequestSnapshot = {
+export const pullRequest: FixturePullRequest = {
   owner: "acme",
   repo: "shop",
   number: 7,
@@ -40,7 +40,7 @@ export const sqlInjection = {
 
 export interface ReviewsSetup {
   /** The Pull Requests the fixture Forge serves; `pullRequest` unless given. */
-  pullRequests?: PullRequestSnapshot[];
+  pullRequests?: FixturePullRequest[];
   /** The Forge, in place of a fixture Forge serving `pullRequests`. */
   forge?: Forge;
   /** The Model Providers, in place of one fake "Ollama" answering with `modelResponses`. */

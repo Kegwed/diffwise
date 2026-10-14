@@ -1,10 +1,10 @@
 import { describe, expect, test } from "vitest";
 import type { ApiError, PullRequestRef } from "@diffwise/shared";
 import { createApp } from "../src/app.ts";
-import type { PullRequestSnapshot } from "../src/forge.ts";
+import type { FixturePullRequest } from "../src/fixture-forge.ts";
 import { fakeForge, fakeModelProvider, standInReviews } from "./fakes.ts";
 
-const pullRequest: PullRequestSnapshot = {
+const pullRequest: FixturePullRequest = {
   owner: "acme",
   repo: "shop",
   number: 7,

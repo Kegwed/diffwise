@@ -22,7 +22,16 @@ const pullRequest: PullRequestSummary = {
   headCommit: "abc1234def",
 };
 
-const pullRequestDetail: PullRequestDetail = { ...pullRequest, changedFiles: ["src/users.ts", "src/config.ts"] };
+const pullRequestDetail: PullRequestDetail = {
+  ...pullRequest,
+  state: "open",
+  baseBranch: "main",
+  headBranch: "user-lookup",
+  changedFiles: [
+    { path: "src/users.ts", additions: 3, deletions: 0, binary: false },
+    { path: "src/config.ts", additions: 2, deletions: 1, binary: false },
+  ],
+};
 
 const usersPatch = [
   "@@ -1,3 +1,8 @@",
@@ -225,6 +234,14 @@ function details(page: HTMLElement) {
   return Object.fromEntries(terms.map((term, i) => [term.textContent, values[i]!.textContent]));
 }
 
+/** The Pull Request's changed files, each as its path and what it changes ("+3 −0", "Binary"). */
+function changedFiles(page: HTMLElement) {
+  const list = within(page).getByRole("list", { name: "Changed files" });
+  return within(list)
+    .getAllByRole("listitem")
+    .map((file) => [file.querySelector("code")!.textContent, file.querySelector(".caption")!.textContent]);
+}
+
 describe("a Review's page", () => {
   test("a Review has its own page, leading back to its Pull Request and saying what was reviewed with which Model", async () => {
     stubApi();
@@ -239,6 +256,7 @@ describe("a Review's page", () => {
     ]);
     expect(within(breadcrumb).getByText("Review of abc1234")).toHaveAttribute("aria-current", "page");
     expect(await within(page).findByRole("heading", { name: "Add user lookup" })).toBeInTheDocument();
+    expect(within(page).getByText("acme/shop #7 · user-lookup into main")).toBeInTheDocument();
     expect(within(page).getByRole("link", { name: "Open on GitHub" })).toHaveAttribute("href", "https://github.com/acme/shop/pull/7");
     await waitFor(() =>
       expect(details(page)).toEqual({
@@ -450,7 +468,7 @@ describe("browsing to a Pull Request", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(error);
   });
 
-  test("selecting a Pull Request shows its title, author, head commit and changed files, with a Review button", async () => {
+  test("selecting a Pull Request shows its title, branches, author, head commit, state and changed files, with a Review button", async () => {
     const fetch = stubApi();
     render(<App />);
 
@@ -458,12 +476,19 @@ describe("browsing to a Pull Request", () => {
     await userEvent.click(await screen.findByRole("link", { name: "Add user lookup" }));
 
     const detail = await screen.findByRole("region", { name: "Add user lookup" });
-    expect(detail).toHaveTextContent("acme/shop#7 by octocat at abc1234");
-    const changedFiles = within(detail).getByRole("list", { name: "Changed files (2)" });
-    expect(within(changedFiles).getAllByRole("listitem").map((file) => file.textContent)).toEqual(["src/users.ts", "src/config.ts"]);
+    expect(within(detail).getByText("acme/shop #7 · user-lookup into main")).toBeInTheDocument();
+    expect(within(detail).getByRole("link", { name: "Open on GitHub" })).toHaveAttribute("href", "https://github.com/acme/shop/pull/7");
+    expect(details(detail)).toEqual({ Author: "octocat", "Head commit": "abc1234", "Changed files": "2 files", "Pull Request": "Open" });
+    expect(changedFiles(detail)).toEqual([
+      ["src/users.ts", "+3 −0"],
+      ["src/config.ts", "+2 −1"],
+    ]);
     expect(screen.queryByRole("region", { name: /review of/i })).not.toBeInTheDocument();
 
-    const button = within(detail).getByRole("button", { name: "Review" });
+    const start = within(detail).getByRole("region", { name: "Start a Review" });
+    expect(start).toHaveTextContent("Reviews head commit abc1234. You choose the Model for each Review.");
+    expect(start).toHaveTextContent("A restart while a Review is running loses it.");
+    const button = within(start).getByRole("button", { name: "Review" });
     expect(button).toHaveClass("dw-btn-primary");
     await waitFor(() => expect(button).toBeEnabled());
     await userEvent.click(button);
@@ -478,10 +503,37 @@ describe("browsing to a Pull Request", () => {
     expect(await openedReview()).toBeInTheDocument();
   });
 
+  test("a binary changed file says so in place of its line counts", async () => {
+    stubApi(review, modelListing, {
+      "/api/repositories/acme/shop/pull-requests/7": () =>
+        Response.json({
+          ...pullRequestDetail,
+          changedFiles: [...pullRequestDetail.changedFiles, { path: "assets/logo.png", additions: 0, deletions: 0, binary: true }],
+        }),
+    });
+    await openPullRequest();
+
+    const detail = screen.getByRole("region", { name: "Add user lookup" });
+    expect(changedFiles(detail).at(-1)).toEqual(["assets/logo.png", "Binary"]);
+    expect(details(detail)).toMatchObject({ "Changed files": "3 files" });
+  });
+
+  test.each<[PullRequestDetail["state"], string]>([
+    ["closed", "Closed"],
+    ["merged", "Merged"],
+  ])("a %s Pull Request says so", async (state, label) => {
+    stubApi(review, modelListing, { "/api/repositories/acme/shop/pull-requests/7": () => Response.json({ ...pullRequestDetail, state }) });
+    await openPullRequest();
+
+    expect(details(screen.getByRole("region", { name: "Add user lookup" }))).toMatchObject({ "Pull Request": label });
+  });
+
   test("the detail view leads back to its Repository's Pull Requests, and to the Repositories", async () => {
     stubApi();
     await openPullRequest();
     const breadcrumb = screen.getByRole("navigation", { name: "Breadcrumb" });
+    expect(within(breadcrumb).getAllByRole("link").map((link) => link.textContent)).toEqual(["acme/shop"]);
+    expect(within(breadcrumb).getByText("#7")).toHaveAttribute("aria-current", "page");
 
     await userEvent.click(within(breadcrumb).getByRole("link", { name: "acme/shop" }));
     expect(await screen.findByRole("heading", { name: /open pull requests in acme\/shop/i })).toBeInTheDocument();
@@ -796,6 +848,7 @@ describe("a Pull Request's Reviews", () => {
     createdAt: "2026-09-27T10:00:00.000Z",
     status: "complete",
     findingCounts: { "bad-practice": 2, "security-issue": 1 },
+    severityCounts: { low: 1, medium: 1, high: 0, critical: 1 },
     outdated: false,
   };
   const gpt: ReviewSummary = {
@@ -805,28 +858,79 @@ describe("a Pull Request's Reviews", () => {
     model: "gpt-4o",
     createdAt: "2026-09-27T11:30:00.000Z",
     findingCounts: { "bad-practice": 0, "security-issue": 0 },
+    severityCounts: { low: 0, medium: 0, high: 0, critical: 0 },
   };
 
-  /** The row of the Pull Request's list of Reviews that leads to the Review by `model`. */
+  /** The row of the Pull Request's list of Reviews of the Review by `model`. */
   function reviewRow(model: RegExp) {
     const reviews = screen.getByRole("list", { name: "Reviews" });
-    return within(reviews).getByRole("link", { name: model }).closest("li")!;
+    const row = within(reviews)
+      .getAllByRole("listitem")
+      .find((item) => model.test(item.textContent ?? ""));
+    expect(row).toBeDefined();
+    return row!;
   }
 
-  test("the detail view lists the Pull Request's Reviews with their Model, head commit, date and Finding counts", async () => {
+  /** Opens the Review by `model` from the Pull Request's list of Reviews. */
+  async function openFromList(model: RegExp) {
+    const row = await waitFor(() => reviewRow(model));
+    await userEvent.click(within(row).getByRole("link"));
+  }
+
+  /** The Severity chips of a row, as they read. */
+  function severityChips(row: HTMLElement) {
+    return [...row.querySelectorAll(".dw-sev")].map((chip) => chip.textContent);
+  }
+
+  test("the detail view lists the Pull Request's Reviews with their date, Model, commit, Findings by Severity and state", async () => {
     stubApi(review, modelListing, { [REVIEWS]: () => Response.json([gpt, llama]) });
     await openPullRequest();
 
     const reviews = await screen.findByRole("list", { name: "Reviews" });
-    expect(within(reviews).getAllByRole("link").map((link) => link.textContent)).toEqual([
-      "gpt-4o via OpenAI-compatible",
-      "llama3.1:8b via Ollama",
+    expect(within(reviews).getAllByRole("link").map((link) => link.getAttribute("href"))).toEqual([
+      "#/acme/shop/pull/7/reviews/review-2",
+      "#/acme/shop/pull/7/reviews/review-1",
     ]);
     const row = reviewRow(/llama3\.1:8b/);
-    expect(row).toHaveTextContent("at abc1234");
+    expect(within(row).getByRole("link")).toContainElement(within(row).getByRole("time"));
     expect(within(row).getByRole("time")).toHaveAttribute("datetime", "2026-09-27T10:00:00.000Z");
-    expect(row).toHaveTextContent("1 Security Issue, 2 Bad Practices");
+    expect(row).toHaveTextContent("Ollama");
+    expect(row).toHaveTextContent("abc1234");
+    expect(severityChips(row)).toEqual(["1 Critical", "1 Medium", "1 Low"]);
+    expect(within(row).getByText("Complete")).toHaveClass("dw-state-complete");
+    expect(severityChips(reviewRow(/gpt-4o/))).toEqual([]);
     expect(reviewRow(/gpt-4o/)).toHaveTextContent("No Findings");
+  });
+
+  test("a running Review's row says how many of its files are done, and that a restart loses it", async () => {
+    stubApi(review, modelListing, {
+      [REVIEWS]: () => Response.json([{ ...gpt, status: "running", progress: { settled: 1, total: 3 } }, llama]),
+    });
+    await openPullRequest();
+
+    await waitFor(() => expect(within(reviewRow(/gpt-4o/)).getByText("Running")).toHaveClass("dw-state-running"));
+    expect(reviewRow(/gpt-4o/)).toHaveTextContent("1 of 3 files. Lost if Diffwise restarts.");
+    expect(reviewRow(/llama3\.1:8b/)).not.toHaveTextContent("Lost if Diffwise restarts.");
+  });
+
+  test("when whether the Reviews are Outdated couldn't be worked out, the list says so above them", async () => {
+    const { outdated: _, ...unchecked } = llama;
+    stubApi(review, modelListing, { [REVIEWS]: () => Response.json([unchecked]) });
+    await openPullRequest();
+
+    const list = await screen.findByRole("region", { name: "Reviews" });
+    await waitFor(() => expect(within(list).getByRole("note")).toHaveTextContent("Couldn't check for new commits"));
+    expect(within(list).getByRole("note")).toHaveTextContent("These Reviews may be Outdated.");
+    expect(within(reviewRow(/llama3\.1:8b/)).getByText("Complete")).toBeInTheDocument();
+  });
+
+  test("when the Reviews were checked for new commits, the list says nothing about it", async () => {
+    stubApi(review, modelListing, { [REVIEWS]: () => Response.json([llama]) });
+    await openPullRequest();
+
+    const list = await screen.findByRole("region", { name: "Reviews" });
+    await waitFor(() => reviewRow(/llama3\.1:8b/));
+    expect(within(list).queryByRole("note")).not.toBeInTheDocument();
   });
 
   test("a Pull Request with no Reviews says so", async () => {
@@ -846,13 +950,13 @@ describe("a Pull Request's Reviews", () => {
     ]);
     await openPullRequest();
 
-    await userEvent.click(await screen.findByRole("link", { name: "llama3.1:8b via Ollama" }));
+    await openFromList(/llama3\.1:8b/);
 
     await waitFor(async () => expect(details(await openedReview())).toMatchObject({ Model: "llama3.1:8b on Ollama" }));
     expect(findingTitles(screen.getByRole("region", { name: "src/users.ts" }))).toEqual(["SQL injection", "Swallowed error"]);
 
     await userEvent.click(within(screen.getByRole("navigation", { name: "Breadcrumb" })).getByRole("link", { name: /^#7/ }));
-    await userEvent.click(await screen.findByRole("link", { name: "gpt-4o via OpenAI-compatible" }));
+    await openFromList(/gpt-4o/);
 
     await waitFor(async () => expect(details(await openedReview())).toMatchObject({ Model: "gpt-4o on OpenAI-compatible" }));
     expect(findingTitles(screen.getByRole("region", { name: "src/users.ts" }))).toEqual(["SQL injection"]);
@@ -860,7 +964,7 @@ describe("a Pull Request's Reviews", () => {
   });
 
   test("a Review that's started joins the list as running, and shows its Finding counts once it completes", async () => {
-    const running: ReviewSummary = { ...llama, status: "running", findingCounts: { "bad-practice": 0, "security-issue": 0 } };
+    const running: ReviewSummary = { ...gpt, id: llama.id, modelProvider: llama.modelProvider, model: llama.model, status: "running" };
     let listed: ReviewSummary[] = [];
     stubApi(review, modelListing, { [REVIEWS]: () => Response.json(listed) });
     const progress = stubProgressStream();
@@ -874,14 +978,14 @@ describe("a Pull Request's Reviews", () => {
 
     // Back on the Pull Request's page, the Review is listed as running, and followed until it completes.
     await userEvent.click(within(screen.getByRole("navigation", { name: "Breadcrumb" })).getByRole("link", { name: /^#7/ }));
-    await waitFor(() => expect(within(reviewRow(/llama3\.1:8b/)).getByText("Running")).toHaveClass("dw-badge-outline"));
+    await waitFor(() => expect(within(reviewRow(/llama3\.1:8b/)).getByText("Running")).toHaveClass("dw-state-running"));
     const stream = await progress.followed();
     stream.send({ type: "review", review: { ...review, status: "running" } });
 
     listed = [llama];
     stream.send({ type: "complete" });
 
-    await waitFor(() => expect(reviewRow(/llama3\.1:8b/)).toHaveTextContent("1 Security Issue, 2 Bad Practices"));
+    await waitFor(() => expect(severityChips(reviewRow(/llama3\.1:8b/))).toEqual(["1 Critical", "1 Medium", "1 Low"]));
     expect(within(reviewRow(/llama3\.1:8b/)).queryByText("Running")).not.toBeInTheDocument();
   });
 
@@ -893,11 +997,11 @@ describe("a Pull Request's Reviews", () => {
     await openPullRequest();
     await waitFor(() => expect(within(reviewRow(/gpt-4o/)).getByText("Running")).toBeInTheDocument());
 
-    listed = [{ ...gpt, findingCounts: { "bad-practice": 0, "security-issue": 1 } }, llama];
+    listed = [{ ...gpt, findingCounts: { "bad-practice": 0, "security-issue": 1 }, severityCounts: { ...gpt.severityCounts, high: 1 } }, llama];
     (await progress.followed("review-2")).send({ type: "review", review: { ...byGpt, status: "running" } }, { type: "complete" });
 
     await waitFor(() => expect(within(reviewRow(/gpt-4o/)).queryByText("Running")).not.toBeInTheDocument());
-    expect(reviewRow(/gpt-4o/)).toHaveTextContent("1 Security Issue");
+    expect(severityChips(reviewRow(/gpt-4o/))).toEqual(["1 High"]);
   });
 
   test("a listed Review that turns out Unsaved is listed as Unsaved, not running", async () => {
@@ -955,8 +1059,10 @@ describe("a Pull Request's Reviews", () => {
 
       await userEvent.click(within(screen.getByRole("navigation", { name: "Breadcrumb" })).getByRole("link", { name: /^#7/ }));
 
-      await waitFor(() => expect(within(reviewRow(/gpt-4o/)).getByText("Outdated")).toHaveClass("dw-badge-neutral"));
+      await waitFor(() => expect(within(reviewRow(/gpt-4o/)).getByText("Outdated")).toHaveClass("dw-state-outdated"));
+      expect(reviewRow(/gpt-4o/)).toHaveTextContent("Head is now abc1234");
       expect(within(reviewRow(/llama3\.1:8b/)).queryByText("Outdated")).not.toBeInTheDocument();
+      expect(reviewRow(/llama3\.1:8b/)).not.toHaveTextContent("Head is now");
     });
 
     test("a Review of the Pull Request's head commit isn't Outdated, and has no button to review the latest commit", async () => {
@@ -1343,18 +1449,43 @@ test("a Review whose every file was reviewed has no incomplete-coverage notice",
   expect(screen.queryByRole("note")).not.toBeInTheDocument();
 });
 
-test("the Model dropdown groups Models by Model Provider, and the Review runs on the chosen one", async () => {
+/** Opens the Model menu from its button, which is named for the Model chosen now. */
+async function openModelMenu(chosen: string) {
+  const picker = await screen.findByRole("button", { name: `Model ${chosen}` });
+  expect(picker).toHaveAttribute("aria-expanded", "false");
+  await userEvent.click(picker);
+  expect(picker).toHaveAttribute("aria-expanded", "true");
+  return { picker, menu: screen.getByRole("group", { name: "Choose a Model for this Review" }) };
+}
+
+/** Each Model Provider's group in the Model menu: its name, all it says, and the Models it offers. */
+function menuGroups(menu: HTMLElement) {
+  return within(menu)
+    .getAllByRole("group")
+    .map((group) => ({
+      name: document.getElementById(group.getAttribute("aria-labelledby")!)!.textContent,
+      text: group.textContent,
+      models: within(group).queryAllByRole("button").map((model) => model.textContent),
+    }));
+}
+
+test("the Model menu groups Models by Model Provider, and the Review runs on the chosen one", async () => {
   const fetch = stubApi({ ...review, modelProvider: "OpenAI-compatible", model: "gpt-4o" });
   await openPullRequest();
 
-  const select = await screen.findByRole("combobox", { name: /model/i });
-  const groups = within(select).getAllByRole("group");
-  expect(groups.map((g) => [g.getAttribute("label"), within(g).getAllByRole("option").map((o) => o.textContent)])).toEqual([
+  const { picker, menu } = await openModelMenu("llama3.1:8b");
+  expect(menuGroups(menu).map(({ name, models }) => [name, models])).toEqual([
     ["Ollama", ["llama3.1:8b", "qwen2.5-coder:7b"]],
     ["OpenAI-compatible", ["gpt-4o"]],
   ]);
+  expect(within(menu).getByRole("button", { name: "llama3.1:8b" })).toHaveAttribute("aria-pressed", "true");
+  expect(within(menu).getByRole("button", { name: "gpt-4o" })).toHaveAttribute("aria-pressed", "false");
 
-  await userEvent.selectOptions(select, "gpt-4o");
+  await userEvent.click(within(menu).getByRole("button", { name: "gpt-4o" }));
+
+  expect(menu).not.toBeInTheDocument();
+  expect(picker).toHaveAccessibleName("Model gpt-4o");
+  expect(picker).toHaveFocus();
   await userEvent.click(screen.getByRole("button", { name: "Review" }));
 
   expect(fetch).toHaveBeenCalledWith(
@@ -1366,16 +1497,31 @@ test("the Model dropdown groups Models by Model Provider, and the Review runs on
   await waitFor(async () => expect(details(await openedReview())).toMatchObject({ Model: "gpt-4o on OpenAI-compatible" }));
 });
 
-test("an unavailable Model Provider is shown with its reason, and the others' Models can still be chosen", async () => {
+test("Escape closes the Model menu, keeping the Model chosen", async () => {
+  stubApi();
+  await openPullRequest();
+
+  const { picker, menu } = await openModelMenu("llama3.1:8b");
+  await userEvent.keyboard("{Escape}");
+
+  expect(menu).not.toBeInTheDocument();
+  expect(picker).toHaveAccessibleName("Model llama3.1:8b");
+  expect(picker).toHaveFocus();
+});
+
+test("an unavailable Model Provider is shown in the Model menu with its reason, and the others' Models can still be chosen", async () => {
   stubApi(review, [
     { modelProvider: "Ollama", status: "unavailable", reason: "Could not reach http://localhost:11434/v1: ECONNREFUSED" },
     { modelProvider: "OpenAI-compatible", status: "available", models: ["gpt-4o"] },
   ]);
   await openPullRequest();
 
-  const select = await screen.findByRole("combobox", { name: /model/i });
-  expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["gpt-4o"]);
-  expect(screen.getByText(/ollama is unavailable/i)).toHaveTextContent(/ECONNREFUSED/);
+  const { menu } = await openModelMenu("gpt-4o");
+  const [ollama, openAI] = menuGroups(menu);
+  expect(ollama).toMatchObject({ name: "Ollama", models: [] });
+  expect(ollama!.text).toMatch(/Unavailable.*ECONNREFUSED/);
+  expect(openAI).toMatchObject({ name: "OpenAI-compatible", models: ["gpt-4o"] });
+  expect(openAI!.text).toMatch(/Connected/);
   expect(screen.getByRole("button", { name: "Review" })).toBeEnabled();
 });
 
@@ -1392,7 +1538,7 @@ test.each<[string, ModelProviderListing[], RegExp]>([
   await openPullRequest();
 
   expect(await screen.findByText(explanation)).toBeInTheDocument();
-  expect(screen.queryByRole("combobox", { name: /model/i })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /^Model/ })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Review" })).toBeDisabled();
 });
 
@@ -1483,8 +1629,8 @@ describe("opening a Pull Request by URL", () => {
     await userEvent.click(screen.getByRole("button", { name: "Open" }));
 
     const detail = await screen.findByRole("region", { name: "Add user lookup" });
-    expect(detail).toHaveTextContent("acme/shop#7 by octocat at abc1234");
-    expect(within(detail).getByRole("list", { name: "Changed files (2)" })).toBeInTheDocument();
+    expect(details(detail)).toMatchObject({ Author: "octocat", "Head commit": "abc1234" });
+    expect(changedFiles(detail)).toHaveLength(2);
     expect(window.location.hash).toBe("#/acme/shop/pull/7");
     expect(within(detail).getByRole("button", { name: "Review" })).toBeInTheDocument();
     expect(fetch).not.toHaveBeenCalledWith("/api/reviews", expect.anything());

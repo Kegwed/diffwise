@@ -1,6 +1,6 @@
-import { isOutdated, type FindingKind, type ModelChoice, type PullRequestRef, type Review, type ReviewEvent, type ReviewSummary } from "@diffwise/shared";
+import { isOutdated, SEVERITIES, type FindingKind, type ModelChoice, type PullRequestRef, type Review, type ReviewEvent, type ReviewSummary } from "@diffwise/shared";
 import { getReview, listReviews, saveReview, type Database, type ListedReview } from "./db.ts";
-import type { Forge } from "./forge.ts";
+import { ForgeAccessError, type Forge } from "./forge.ts";
 import { modelUnavailable, type ModelProvider, type ModelUnavailable } from "./model-provider.ts";
 import { startReview, type ReviewRun } from "./review-engine.ts";
 
@@ -30,7 +30,8 @@ export interface Reviews {
   get(id: string): Review | undefined;
   /**
    * The Pull Request's Reviews, newest first, each Outdated or not against the Pull Request's head commit as it is now;
-   * undefined if there's no such Pull Request.
+   * undefined if there's no such Pull Request. When the head commit can't be read, but Diffwise can read the Repository,
+   * they're listed without saying whether they're Outdated.
    */
   list(pullRequest: PullRequestRef): Promise<ReviewSummary[] | undefined>;
   /**
@@ -68,15 +69,16 @@ export function createReviews({ forge, modelProviders, db, modelCallTimeoutMs }:
     },
 
     async list(ref) {
-      const pullRequest = await forge.getPullRequestSummary(ref);
+      const pullRequest = await forge.getPullRequestSummary(ref).catch((error: unknown) => {
+        // Diffwise can't read the Repository, so it mustn't list Reviews of it either.
+        if (error instanceof ForgeAccessError) throw error;
+        return "unreadable" as const;
+      });
       if (!pullRequest) return undefined;
-      const unsaved = [...running.values()]
-        .map((run) => run.current())
-        .filter((review) => isSamePullRequest(review.pullRequest, pullRequest))
-        .map(summary);
-      const reviews = [...unsaved, ...listReviews(db, pullRequest).map(summary)].sort(newestFirst);
+      // The Reviews are still worth seeing when GitHub can't be reached; only whether they're Outdated isn't known.
+      if (pullRequest === "unreadable") return reviewsOf(ref);
       // Outdated is worked out against the head commit as it is now, so it's never saved.
-      return reviews.map((review) => ({ ...review, outdated: isOutdated(review, pullRequest) }));
+      return reviewsOf(pullRequest).map((review) => ({ ...review, outdated: isOutdated(review, pullRequest) }));
     },
 
     follow(id, signal) {
@@ -86,6 +88,15 @@ export function createReviews({ forge, modelProviders, db, modelCallTimeoutMs }:
       return saved && completed(saved);
     },
   };
+
+  /** The Pull Request's Reviews, running, Unsaved and saved, newest first. */
+  function reviewsOf(pullRequest: PullRequestRef): ReviewSummary[] {
+    const unsaved = [...running.values()]
+      .map((run) => run.current())
+      .filter((review) => isSamePullRequest(review.pullRequest, pullRequest))
+      .map((review) => ({ ...summary(review), ...(review.status === "running" && { progress: progress(review) }) }));
+    return [...unsaved, ...listReviews(db, pullRequest).map(summary)].sort(newestFirst);
+  }
 }
 
 /** A saved Review's progress, which has nothing left to wait for: the Review, then its completion. */
@@ -99,7 +110,7 @@ function isSamePullRequest(a: PullRequestRef, b: PullRequestRef): boolean {
 }
 
 /** A Review, running or saved, as a list of Reviews shows it. */
-function summary({ id, modelProvider, model, headCommit, createdAt, status, findings }: ListedReview): Omit<ReviewSummary, "outdated"> {
+function summary({ id, modelProvider, model, headCommit, createdAt, status, findings }: ListedReview): ReviewSummary {
   const count = (kind: FindingKind) => findings.filter((finding) => finding.kind === kind).length;
   return {
     id,
@@ -109,7 +120,17 @@ function summary({ id, modelProvider, model, headCommit, createdAt, status, find
     createdAt,
     status,
     findingCounts: { "bad-practice": count("bad-practice"), "security-issue": count("security-issue") },
+    severityCounts: Object.fromEntries(
+      SEVERITIES.map((severity) => [severity, findings.filter((finding) => finding.severity === severity).length]),
+    ) as ReviewSummary["severityCounts"],
   };
+}
+
+/** How far a running Review has got with the files it sends to the Model. */
+function progress({ fileOutcomes, pendingFiles }: Review): NonNullable<ReviewSummary["progress"]> {
+  // Skipped files are never sent to the Model, so they're neither done nor left to do.
+  const settled = fileOutcomes.filter((outcome) => outcome.outcome !== "skipped").length;
+  return { settled, total: settled + pendingFiles.length };
 }
 
 function newestFirst(a: { createdAt: string }, b: { createdAt: string }): number {

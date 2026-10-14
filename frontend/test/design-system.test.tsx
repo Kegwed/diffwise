@@ -1,7 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, test, vi } from "vitest";
-import { Badge, Button, ConnectionStatus, Finding, Notice, ReviewState, Severity } from "../src/design-system/index.ts";
+import { Badge, Button, ConnectionStatus, Finding, Menu, MenuGroup, MenuItem, Notice, ReviewState, Severity } from "../src/design-system/index.ts";
 
 test.each([
   ["critical", "Critical", 4],
@@ -144,4 +144,30 @@ test("beside a diff, a Finding's location is a button to its lines, current when
 
   rerender(<Finding kind="bad-practice" severity="low" title="Magic number" file="src/config.ts" lines="1–2" onShowLines={onShowLines} linesShown />);
   expect(screen.getByRole("button", { name: "src/config.ts:1–2" })).toHaveAttribute("aria-current", "true");
+});
+
+test("a Severity in a summary puts its count before its label", () => {
+  render(<Severity severity="critical" count={2} />);
+
+  expect(screen.getByText("2 Critical")).toBeInTheDocument();
+});
+
+test("a Menu's groups are named by their labels, and a group that can't be used says why in place of its items", () => {
+  render(
+    <Menu label="Choose a Model for this Review">
+      <MenuGroup label="Ollama" aside={<ConnectionStatus status="ok">Connected</ConnectionStatus>}>
+        <MenuItem selected>qwen2.5-coder:14b</MenuItem>
+        <MenuItem>llama3.1:8b</MenuItem>
+      </MenuGroup>
+      <MenuGroup label="OpenAI-compatible" note="Couldn't reach https://llm.internal.example/v1: connection refused." />
+    </Menu>,
+  );
+
+  const menu = screen.getByRole("group", { name: "Choose a Model for this Review" });
+  const ollama = within(menu).getByRole("group", { name: "Ollama" });
+  expect(within(ollama).getByRole("button", { name: "qwen2.5-coder:14b" })).toHaveAttribute("aria-pressed", "true");
+  expect(within(ollama).getByRole("button", { name: "llama3.1:8b" })).toHaveAttribute("aria-pressed", "false");
+  const openAI = within(menu).getByRole("group", { name: "OpenAI-compatible" });
+  expect(openAI).toHaveTextContent("connection refused");
+  expect(within(openAI).queryByRole("button")).not.toBeInTheDocument();
 });

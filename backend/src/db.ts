@@ -153,7 +153,7 @@ export function getReview(db: Database, id: string): Review | undefined {
 
 /** A Review as a list of Reviews needs it: no File Outcomes, and only the kind of each Finding. */
 export type ListedReview = Pick<Review, "id" | "modelProvider" | "model" | "headCommit" | "createdAt" | "status"> & {
-  findings: Pick<Finding, "kind">[];
+  findings: Pick<Finding, "kind" | "severity">[];
 };
 
 /** The Pull Request's saved Reviews, newest first. Whether each is Outdated isn't saved, so it's left to the caller. */
@@ -163,10 +163,10 @@ export function listReviews(db: Database, { owner, repo, number }: PullRequestRe
     .all(owner, repo, number) as unknown as ReviewRow[];
   const findingRows = db
     .prepare(
-      `SELECT findings.review_id, findings.kind FROM findings JOIN reviews ON reviews.id = findings.review_id
+      `SELECT findings.review_id, findings.kind, findings.severity FROM findings JOIN reviews ON reviews.id = findings.review_id
        WHERE owner = ? AND repo = ? AND number = ? ORDER BY findings.position`,
     )
-    .all(owner, repo, number) as unknown as { review_id: string; kind: FindingKind }[];
+    .all(owner, repo, number) as unknown as ({ review_id: string } & ListedReview["findings"][number])[];
   const findings = Map.groupBy(findingRows, (finding) => finding.review_id);
   return rows.map((row) => ({
     id: row.id,
@@ -176,7 +176,7 @@ export function listReviews(db: Database, { owner, repo, number }: PullRequestRe
     createdAt: row.created_at,
     // Only complete Reviews are saved.
     status: "complete",
-    findings: (findings.get(row.id) ?? []).map(({ kind }) => ({ kind })),
+    findings: (findings.get(row.id) ?? []).map(({ kind, severity }) => ({ kind, severity })),
   }));
 }
 

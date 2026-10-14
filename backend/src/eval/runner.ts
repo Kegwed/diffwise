@@ -1,6 +1,5 @@
 import type { FileOutcome, FindingKind, ModelChoice } from "@diffwise/shared";
-import { fixtureForge } from "../fixture-forge.ts";
-import type { PullRequestSnapshot } from "../forge.ts";
+import { fixtureForge, type FixturePullRequest } from "../fixture-forge.ts";
 import type { ModelProvider } from "../model-provider.ts";
 import { startReview } from "../review-engine.ts";
 import type { EvalFixture } from "./eval-set.ts";
@@ -8,7 +7,7 @@ import { scoreFindings, type Score } from "./scoring.ts";
 
 /** How the Model's Review of one fixture did. */
 export interface FixtureResult extends Score {
-  pullRequest: PullRequestSnapshot;
+  pullRequest: FixturePullRequest;
   /** The files that were skipped or failed. The Planted Problems in them are missed. */
   notReviewed: Exclude<FileOutcome, { outcome: "reviewed" }>[];
 }
@@ -37,7 +36,7 @@ export async function runEvalSet(
     const pullRequest = (await forge.getPullRequest(fixture.pullRequest))!;
     const review = await startReview(pullRequest, model, modelProvider).finished;
     fixtures.push({
-      pullRequest,
+      pullRequest: fixture.pullRequest,
       ...scoreFindings(fixture.plantedProblems, review.findings),
       notReviewed: review.fileOutcomes.filter((fileOutcome) => fileOutcome.outcome !== "reviewed"),
     });

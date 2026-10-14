@@ -1,13 +1,13 @@
 import { describe, expect, test, vi } from "vitest";
 import type { ReviewEvent } from "@diffwise/shared";
-import type { PullRequestSnapshot } from "../src/forge.ts";
+import type { FixturePullRequest } from "../src/fixture-forge.ts";
 import { held } from "./fakes.ts";
 import { completedReview, followReview, pullRequest as oneFile, setupReviews, sqlInjection, startReview, usersPatch } from "./reviewing.ts";
 
 const configPatch = "@@ -0,0 +1 @@\n+export const retries = 3;";
 
 /** Changes a file that will be reviewed, one on the skip list, and one more for the Model. */
-const pullRequest: PullRequestSnapshot = {
+const pullRequest: FixturePullRequest = {
   ...oneFile,
   files: [
     { path: "src/users.ts", patch: usersPatch },

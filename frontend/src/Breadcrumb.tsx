@@ -7,7 +7,7 @@ export function Breadcrumb({ above, current }: { above: { label: string; href: s
       {above.map(({ label, href }) => (
         <Fragment key={href}>
           <a href={href}>{label}</a>
-          <span aria-hidden="true">/</span>
+          <span aria-hidden="true">›</span>
         </Fragment>
       ))}
       <span aria-current="page">{current}</span>

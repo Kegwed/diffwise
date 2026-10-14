@@ -188,8 +188,11 @@ export function createApp({
   return app;
 }
 
-function detail({ owner, repo, number, title, author, headCommit, files }: PullRequestSnapshot): PullRequestDetail {
-  return { owner, repo, number, title, author, headCommit, changedFiles: files.map((file) => file.path) };
+function detail({ description, files, ...pullRequest }: PullRequestSnapshot): PullRequestDetail {
+  return {
+    ...pullRequest,
+    changedFiles: files.map(({ path, additions, deletions, binary }) => ({ path, additions, deletions, binary })),
+  };
 }
 
 /** The Pull Request a path names, if its number could be one. */

@@ -1,13 +1,12 @@
-import type { PullRequestRef, PullRequestSummary, RepositoryListing, RepositoryRef } from "@diffwise/shared";
+import type { ChangedFileStat, PullRequestDetail, PullRequestRef, PullRequestSummary, RepositoryListing, RepositoryRef } from "@diffwise/shared";
 
-export interface ChangedFile {
-  path: string;
-  /** Unified diff hunks for this file, as GitHub reports them. */
+export interface ChangedFile extends ChangedFileStat {
+  /** Unified diff hunks for this file, as GitHub reports them; empty when GitHub sends none, as for a binary file. */
   patch: string;
 }
 
-/** Everything the Review Engine needs to know about a Pull Request at its head commit. */
-export interface PullRequestSnapshot extends PullRequestSummary {
+/** Everything the Review Engine, and the user before starting a Review, need to know about a Pull Request at its head commit. */
+export interface PullRequestSnapshot extends Omit<PullRequestDetail, "changedFiles"> {
   description: string;
   files: ChangedFile[];
 }

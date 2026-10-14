@@ -12,8 +12,19 @@ interface GitHubPull {
   title: string;
   body: string | null;
   user: { login: string } | null;
-  head: { sha: string };
-  base: { repo: GitHubRepository };
+  state: "open" | "closed";
+  merged_at: string | null;
+  head: { sha: string; ref: string };
+  base: { ref: string; repo: GitHubRepository };
+}
+
+/** A changed file as GitHub's API describes it, as far as Diffwise reads it. */
+interface GitHubFile {
+  filename: string;
+  status: string;
+  additions: number;
+  deletions: number;
+  patch?: string;
 }
 
 interface GitHubRepository {
@@ -102,7 +113,7 @@ export function githubForge(loadCredentials: () => GitHubAppCredentials | undefi
       const token = await repositoryToken(ref);
       const pull = await fetchPull(ref, token);
       if (!pull) return undefined;
-      const files = await listAll<{ filename: string; patch?: string }>(
+      const files = await listAll<GitHubFile>(
         `${pullPath(ref)}/files`,
         token,
         `listing the changed files of ${ref.owner}/${ref.repo}#${ref.number}`,
@@ -110,9 +121,20 @@ export function githubForge(loadCredentials: () => GitHubAppCredentials | undefi
       );
       return {
         ...summary(pull),
+        // GitHub calls a merged Pull Request closed, and says when it was merged.
+        state: pull.merged_at ? "merged" : pull.state,
+        baseBranch: pull.base.ref,
+        headBranch: pull.head.ref,
         description: pull.body ?? "",
         // GitHub sends no patch for binary files and diffs too large to show; the skip list reports those.
-        files: files.map((file) => ({ path: file.filename, patch: file.patch ?? "" })),
+        files: files.map((file) => ({
+          path: file.filename,
+          patch: file.patch ?? "",
+          additions: file.additions,
+          deletions: file.deletions,
+          // GitHub doesn't say a file is binary, but sends no patch and counts no lines for one, unless it was only renamed.
+          binary: file.patch === undefined && file.additions + file.deletions === 0 && file.status !== "renamed",
+        })),
       };
     },
 

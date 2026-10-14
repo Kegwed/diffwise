@@ -1,25 +1,30 @@
 import { describe, expect, test } from "vitest";
 import type { ApiError, PullRequestDetail, PullRequestSummary, RepositoryListing } from "@diffwise/shared";
 import { createApp } from "../src/app.ts";
-import { withFixtures } from "../src/fixture-forge.ts";
-import type { Forge, PullRequestSnapshot } from "../src/forge.ts";
+import { withFixtures, type FixturePullRequest } from "../src/fixture-forge.ts";
+import type { Forge } from "../src/forge.ts";
 import { fakeForge, fakeModelProvider, standInReviews } from "./fakes.ts";
 
-const userLookup: PullRequestSnapshot = {
+const userLookup: FixturePullRequest = {
   owner: "acme",
   repo: "shop",
   number: 7,
   title: "Add user lookup",
   author: "octocat",
   headCommit: "abc1234",
+  state: "open",
+  baseBranch: "develop",
+  headBranch: "user-lookup",
   description: "Adds an endpoint to look users up by name.",
   files: [
-    { path: "src/users.ts", patch: "@@ -0,0 +1 @@\n+export const x = 1;" },
+    { path: "src/users.ts", patch: "@@ -0,0 +1,2 @@\n+export const x = 1;\n+export const y = 2;" },
     { path: "package-lock.json", patch: '@@ -1 +1 @@\n-"a"\n+"b"' },
+    // GitHub sends no patch for a binary file.
+    { path: "assets/logo.png", patch: "" },
   ],
 };
 
-const checkout: PullRequestSnapshot = {
+const checkout: FixturePullRequest = {
   owner: "acme",
   repo: "shop",
   number: 9,
@@ -30,7 +35,7 @@ const checkout: PullRequestSnapshot = {
   files: [{ path: "src/checkout.ts", patch: "@@ -0,0 +1 @@\n+export const y = 2;" }],
 };
 
-const docsTypo: PullRequestSnapshot = {
+const docsTypo: FixturePullRequest = {
   owner: "acme",
   repo: "docs",
   number: 2,
@@ -83,7 +88,7 @@ describe("Browsing Repositories", () => {
 });
 
 describe("A Pull Request's detail", () => {
-  test("has its title, author, head commit and changed files, in the Pull Request's file order", async () => {
+  test("has its title, author, head commit, state, branches and changed files, in the Pull Request's file order", async () => {
     const response = await setup().request("/api/repositories/acme/shop/pull-requests/7");
 
     expect(response.status).toBe(200);
@@ -94,8 +99,35 @@ describe("A Pull Request's detail", () => {
       title: "Add user lookup",
       author: "octocat",
       headCommit: "abc1234",
-      changedFiles: ["src/users.ts", "package-lock.json"],
+      state: "open",
+      baseBranch: "develop",
+      headBranch: "user-lookup",
+      changedFiles: [
+        { path: "src/users.ts", additions: 2, deletions: 0, binary: false },
+        { path: "package-lock.json", additions: 1, deletions: 1, binary: false },
+        { path: "assets/logo.png", additions: 0, deletions: 0, binary: true },
+      ],
     });
+  });
+
+  test("of a fixture Pull Request is open into main unless it says otherwise", async () => {
+    const response = await setup().request("/api/repositories/acme/shop/pull-requests/9");
+
+    expect(await response.json()).toMatchObject({ state: "open", baseBranch: "main" });
+  });
+
+  test("of a merged Pull Request says so, and it isn't listed among the open ones", async () => {
+    const app = createApp({
+      forge: fakeForge([userLookup, { ...checkout, state: "merged" }]),
+      modelProviders: [],
+      reviews: standInReviews(),
+    });
+
+    const detail = (await (await app.request("/api/repositories/acme/shop/pull-requests/9")).json()) as PullRequestDetail;
+    const open = (await (await app.request("/api/repositories/acme/shop/pull-requests")).json()) as PullRequestSummary[];
+
+    expect(detail.state).toBe("merged");
+    expect(open.map((pr) => pr.number)).toEqual([7]);
   });
 
   test("a pasted URL resolves to the same detail", async () => {

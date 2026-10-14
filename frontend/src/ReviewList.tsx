@@ -1,48 +1,110 @@
-import type { PullRequestRef, ReviewSummary } from "@diffwise/shared";
-import { Badge } from "./design-system/index.ts";
-import { KINDS_BY_PRIORITY, kindLabel } from "./findings.ts";
+import { SEVERITIES, type PullRequestRef, type ReviewSummary } from "@diffwise/shared";
+import { Notice, ReviewState, Severity } from "./design-system/index.ts";
 import { HeadCommit } from "./HeadCommit.tsx";
 import { reviewHref } from "./route.ts";
 
-const DATE_FORMAT = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
+const DATE_FORMAT = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
-/** A Pull Request's Reviews, newest first, each leading to the Review's own page. */
-export function ReviewList({ pullRequest, reviews }: { pullRequest: PullRequestRef; reviews: ReviewSummary[] }) {
+/** Highest first, as Findings are sorted. */
+const SEVERITIES_BY_PRIORITY = [...SEVERITIES].reverse();
+
+/**
+ * A Pull Request's Reviews, newest first, each leading to the Review's own page. `headCommit` is the Pull Request's
+ * head commit, once it's loaded, which an Outdated Review names.
+ */
+export function ReviewList({
+  pullRequest,
+  reviews,
+  headCommit,
+}: {
+  pullRequest: PullRequestRef;
+  reviews: ReviewSummary[];
+  headCommit?: string;
+}) {
+  // Each is Outdated or not, unless the Pull Request's head commit couldn't be read when they were listed.
+  const unchecked = reviews.some((review) => review.outdated === undefined);
+
   return (
-    <section aria-labelledby="reviews">
-      <h2 id="reviews">Reviews</h2>
+    <section aria-labelledby="reviews" className="card review-list">
+      <div className="card-head">
+        <h3 id="reviews">Reviews</h3>
+        <span className="caption">Newest first</span>
+      </div>
+      {unchecked && (
+        <Notice role="note" title="Couldn't check for new commits" className="review-list-notice">
+          <p>Diffwise couldn't reach GitHub to see whether newer commits were pushed. These Reviews may be Outdated.</p>
+        </Notice>
+      )}
       {reviews.length === 0 ? (
-        <p>This Pull Request has no Reviews yet.</p>
+        <p className="review-list-empty">This Pull Request has no Reviews yet.</p>
       ) : (
-        <ul aria-labelledby="reviews" className="rows">
-          {reviews.map((review) => (
-            <li key={review.id}>
-              <div className="row-head">
+        <>
+          <div className="review-row review-row-head caption" aria-hidden="true">
+            <span>Date</span>
+            <span>Model</span>
+            <span>Commit</span>
+            <span>Findings</span>
+            <span>State</span>
+          </div>
+          <ul aria-labelledby="reviews">
+            {reviews.map((review) => (
+              <li key={review.id} className="review-row">
                 <a href={reviewHref(pullRequest, review.id)}>
-                  {review.model} via {review.modelProvider}
+                  <time dateTime={review.createdAt}>{DATE_FORMAT.format(new Date(review.createdAt))}</time>
                 </a>
-                {review.status === "running" && <Badge tone="outline">Running</Badge>}
-                {review.status === "unsaved" && <Badge>Unsaved</Badge>}
-                {review.outdated && <Badge>Outdated</Badge>}
-              </div>
-              <div className="caption">
-                at <HeadCommit commit={review.headCommit} />,{" "}
-                <time dateTime={review.createdAt}>{DATE_FORMAT.format(new Date(review.createdAt))}</time>
-                {" · "}
-                {findingCounts(review.findingCounts)}
-              </div>
-            </li>
-          ))}
-        </ul>
+                <div className="review-row-model">
+                  <code>{review.model}</code>
+                  <span className="caption">{review.modelProvider}</span>
+                </div>
+                <div>
+                  <HeadCommit commit={review.headCommit} />
+                </div>
+                <SeverityCounts counts={review.severityCounts} />
+                <div className="review-row-state">
+                  <ReviewState state={review.outdated && review.status === "complete" ? "outdated" : review.status} />
+                  <ReviewNote review={review} headCommit={headCommit} />
+                </div>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
     </section>
   );
 }
 
-function findingCounts(counts: ReviewSummary["findingCounts"]): string {
-  const parts = KINDS_BY_PRIORITY.flatMap((kind) => {
-    const count = counts[kind];
-    return count > 0 ? [`${count} ${kindLabel(kind, count)}`] : [];
-  });
-  return parts.length > 0 ? parts.join(", ") : "No Findings";
+/** How many Findings of each Severity a Review reports, highest first, leaving out the Severities it has none of. */
+function SeverityCounts({ counts }: { counts: ReviewSummary["severityCounts"] }) {
+  const reported = SEVERITIES_BY_PRIORITY.filter((severity) => counts[severity] > 0);
+  return (
+    <div className="review-row-findings">
+      {reported.length === 0 ? (
+        <span className="caption">No Findings</span>
+      ) : (
+        reported.map((severity) => <Severity key={severity} severity={severity} count={counts[severity]} />)
+      )}
+    </div>
+  );
+}
+
+/** What a Review's state means for it: how far it's got and that it's lost on a restart, or what the head commit now is. */
+function ReviewNote({ review, headCommit }: { review: ReviewSummary; headCommit?: string }) {
+  // Running and Unsaved Reviews aren't saved yet.
+  if (review.status !== "complete") {
+    const { progress } = review;
+    return (
+      <span className="caption">
+        {review.status === "running" && progress && `${progress.settled} of ${progress.total} files. `}Lost if Diffwise
+        restarts.
+      </span>
+    );
+  }
+  if (review.outdated && headCommit) {
+    return (
+      <span className="caption">
+        Head is now <HeadCommit commit={headCommit} />
+      </span>
+    );
+  }
+  return null;
 }

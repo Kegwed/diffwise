@@ -22,10 +22,24 @@ export interface PullRequestSummary extends PullRequestRef {
   headCommit: string;
 }
 
+/** One file a Pull Request changes, with how many lines it adds and deletes, as GitHub counts them. */
+export interface ChangedFileStat {
+  path: string;
+  additions: number;
+  deletions: number;
+  /** Whether it's a binary file, which has no lines to count. */
+  binary: boolean;
+}
+
 /** What the user sees of a Pull Request before starting a Review of it. */
 export interface PullRequestDetail extends PullRequestSummary {
-  /** The paths of the files it changes, in the Pull Request's file order. */
-  changedFiles: string[];
+  state: "open" | "closed" | "merged";
+  /** The branch it would merge into. */
+  baseBranch: string;
+  /** The branch its changes are on. */
+  headBranch: string;
+  /** The files it changes, in the Pull Request's file order. */
+  changedFiles: ChangedFileStat[];
 }
 
 export const FINDING_KINDS = ["bad-practice", "security-issue"] as const;
@@ -98,8 +112,18 @@ export interface ReviewSummary extends ModelChoice {
   status: Review["status"];
   /** How many Findings of each kind it reports; so far, while it's running. */
   findingCounts: Record<FindingKind, number>;
-  /** Whether the Pull Request's head commit is no longer the Review's. Worked out when the Reviews are listed, never saved. */
-  outdated: boolean;
+  /** How many Findings of each Severity it reports; so far, while it's running. */
+  severityCounts: Record<Severity, number>;
+  /**
+   * While it's running: how many of the files it sends to the Model have their File Outcome, of how many. Skipped files
+   * are never sent, so they count in neither.
+   */
+  progress?: { settled: number; total: number };
+  /**
+   * Whether the Pull Request's head commit is no longer the Review's. Worked out when the Reviews are listed, never
+   * saved; left out when the Pull Request's head commit couldn't be read.
+   */
+  outdated?: boolean;
 }
 
 export interface StartReviewRequest extends ModelChoice {

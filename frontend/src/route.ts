@@ -22,6 +22,11 @@ export function reviewHref(pullRequest: PullRequestRef, reviewId: string): strin
   return `${pullRequestHref(pullRequest)}/reviews/${encodeURIComponent(reviewId)}`;
 }
 
+/** The Pull Request's own page on GitHub. */
+export function githubHref({ owner, repo, number }: PullRequestRef): string {
+  return `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pull/${number}`;
+}
+
 /** Anything that isn't a Repository's or a Pull Request's fragment is the first view, the Repositories. */
 export function parseRoute(hash: string): Route {
   const match = /^#\/([^/]+)\/([^/]+)(?:\/pull\/([1-9]\d*)(?:\/reviews\/([^/]+))?)?\/?$/.exec(hash);

@@ -5,7 +5,8 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, expect, test } from "vitest";
 import type { ModelChoice } from "@diffwise/shared";
 import { openDatabase } from "../src/db.ts";
-import { ForgeAccessError, type PullRequestSnapshot } from "../src/forge.ts";
+import type { FixturePullRequest } from "../src/fixture-forge.ts";
+import { ForgeAccessError } from "../src/forge.ts";
 import { fakeForge, fakeModelProvider, hang } from "./fakes.ts";
 import { completedReview, pullRequest, setupReviews, sqlInjection } from "./reviewing.ts";
 
@@ -67,7 +68,7 @@ describe("Reviews", () => {
   describe("Findings stay on the lines the Pull Request adds or modifies", () => {
     // New-version lines: 1 unchanged, 2 modified, 3 unchanged; then 10 unchanged, 11 and 12 added, 13 unchanged;
     // then old line 20 removed, and old line 21 unchanged as new line 22.
-    const twoHunks: PullRequestSnapshot = {
+    const twoHunks: FixturePullRequest = {
       ...pullRequest,
       files: [
         {
@@ -123,7 +124,7 @@ describe("Reviews", () => {
   });
 
   test("each changed file is reviewed by its own Model call", async () => {
-    const twoFiles: PullRequestSnapshot = {
+    const twoFiles: FixturePullRequest = {
       ...pullRequest,
       files: [
         pullRequest.files[0]!,
@@ -150,7 +151,7 @@ describe("Reviews", () => {
   });
 
   test("files on the skip list are never sent to the Model and are skipped with a reason", async () => {
-    const withSkippable: PullRequestSnapshot = {
+    const withSkippable: FixturePullRequest = {
       ...pullRequest,
       files: [
         { path: "package-lock.json", patch: '@@ -1 +1 @@\n-"a"\n+"b"' },
@@ -182,7 +183,7 @@ describe("Reviews", () => {
 
   test("a file over the size limit is never sent to the Model and is skipped with a reason", async () => {
     const hugeLines = Array.from({ length: 20_000 }, (_, i) => `+export const value${i} = ${i};`);
-    const withHugeFile: PullRequestSnapshot = {
+    const withHugeFile: FixturePullRequest = {
       ...pullRequest,
       files: [{ path: "src/generated.ts", patch: [`@@ -0,0 +1,${hugeLines.length} @@`, ...hugeLines].join("\n") }, pullRequest.files[0]!],
     };
@@ -198,7 +199,7 @@ describe("Reviews", () => {
   });
 
   test("a file whose retry is also invalid fails with a reason, and the other files are still reviewed", async () => {
-    const twoFiles: PullRequestSnapshot = {
+    const twoFiles: FixturePullRequest = {
       ...pullRequest,
       files: [{ path: "src/config.ts", patch: "@@ -0,0 +1 @@\n+export const retries = 3;" }, pullRequest.files[0]!],
     };
@@ -216,7 +217,7 @@ describe("Reviews", () => {
   });
 
   test("each file's Model call sees the Pull Request's title and description, labelled as the author's claims", async () => {
-    const twoFiles: PullRequestSnapshot = {
+    const twoFiles: FixturePullRequest = {
       ...pullRequest,
       files: [pullRequest.files[0]!, { path: "src/config.ts", patch: "@@ -0,0 +1 @@\n+export const retries = 3;" }],
     };
@@ -234,7 +235,7 @@ describe("Reviews", () => {
   });
 
   test("the Model sees the diff with each added or unchanged line numbered as in the new version of the file", async () => {
-    const twoHunks: PullRequestSnapshot = {
+    const twoHunks: FixturePullRequest = {
       ...pullRequest,
       files: [
         {

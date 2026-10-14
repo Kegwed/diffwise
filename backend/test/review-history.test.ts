@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import type { ReviewSummary } from "@diffwise/shared";
-import { ForgeAccessError, type Forge, type PullRequestSnapshot } from "../src/forge.ts";
-import { fixtureForge } from "../src/fixture-forge.ts";
+import { ForgeAccessError, type Forge } from "../src/forge.ts";
+import { fixtureForge, type FixturePullRequest } from "../src/fixture-forge.ts";
 import type { ModelProvider } from "../src/model-provider.ts";
 import type { Reviews } from "../src/reviews.ts";
 import { fakeForge, fakeModelProvider, held } from "./fakes.ts";
@@ -16,7 +16,7 @@ const vagueName = {
   explanation: "findUser doesn't say it looks users up by name.",
 };
 
-function setup(modelProviders: ModelProvider[], others: PullRequestSnapshot[] = []) {
+function setup(modelProviders: ModelProvider[], others: FixturePullRequest[] = []) {
   const pullRequests = [pullRequest, ...others];
   const { reviews } = setupReviews([], { forge: fakeForge(pullRequests), modelProviders });
   /** Moves the Pull Request's head commit on, as pushing new commits to it does. The fake Forge serves `pullRequests` as it then is. */
@@ -31,7 +31,7 @@ async function listReviews(reviews: Reviews, number = pullRequest.number): Promi
 }
 
 describe("A Pull Request's Reviews", () => {
-  test("are listed with their Model, head commit, date and Finding counts", async () => {
+  test("are listed with their Model, head commit, date and Finding counts by kind and by Severity", async () => {
     const { reviews } = setup([fakeModelProvider([{ findings: [sqlInjection, vagueName, { ...sqlInjection, startLine: 2, endLine: 2 }] }]).provider]);
     const review = await completedReview(reviews, pullRequest);
 
@@ -44,6 +44,7 @@ describe("A Pull Request's Reviews", () => {
         createdAt: review.createdAt,
         status: "complete",
         findingCounts: { "bad-practice": 1, "security-issue": 2 },
+        severityCounts: { low: 1, medium: 0, high: 0, critical: 2 },
         outdated: false,
       },
     ]);
@@ -104,7 +105,7 @@ describe("A Pull Request's Reviews", () => {
     expect(await listReviews(reviews, 8)).toHaveLength(1);
   });
 
-  test("a Review still running is listed as running, with its Finding counts so far", async () => {
+  test("a Review still running is listed as running, with its Finding counts and how many of its files have settled so far", async () => {
     const twoFiles = {
       ...pullRequest,
       number: 8,
@@ -120,13 +121,22 @@ describe("A Pull Request's Reviews", () => {
     for (let event = await stream.next(); event?.type !== "file-reviewing"; event = await stream.next());
 
     expect(await listReviews(reviews, 8)).toMatchObject([
-      { id, status: "running", findingCounts: { "bad-practice": 0, "security-issue": 1 }, outdated: false },
+      {
+        id,
+        status: "running",
+        findingCounts: { "bad-practice": 0, "security-issue": 1 },
+        severityCounts: { low: 0, medium: 0, high: 0, critical: 1 },
+        progress: { settled: 1, total: 2 },
+        outdated: false,
+      },
     ]);
 
     config.release();
     await stream.rest();
 
-    expect(await listReviews(reviews, 8)).toMatchObject([{ id, status: "complete" }]);
+    const [complete] = await listReviews(reviews, 8);
+    expect(complete).toMatchObject({ id, status: "complete" });
+    expect(complete).not.toHaveProperty("progress");
   });
 
   test("a running Review and a saved one are listed alike, newest first", async () => {
@@ -145,6 +155,8 @@ describe("A Pull Request's Reviews", () => {
         createdAt: running.createdAt,
         status: "running",
         findingCounts: { "bad-practice": 0, "security-issue": 0 },
+        severityCounts: { low: 0, medium: 0, high: 0, critical: 0 },
+        progress: { settled: 0, total: 1 },
         outdated: false,
       },
       {
@@ -155,6 +167,7 @@ describe("A Pull Request's Reviews", () => {
         createdAt: saved.createdAt,
         status: "complete",
         findingCounts: { "bad-practice": 0, "security-issue": 1 },
+        severityCounts: { low: 0, medium: 0, high: 0, critical: 1 },
         outdated: false,
       },
     ]);
@@ -176,6 +189,22 @@ describe("A Pull Request's Reviews", () => {
     const listed = await setupReviews([], { db, forge }).reviews.list(pullRequest);
 
     expect(listed).toMatchObject([{ id: saved.id, headCommit: "abc1234", outdated: true }]);
+  });
+
+  test("are still listed when the Pull Request's head commit can't be read, without saying whether they're Outdated", async () => {
+    const { reviews, db } = setupReviews([{ findings: [sqlInjection] }]);
+    const saved = await completedReview(reviews, pullRequest);
+    const forge: Forge = {
+      ...fixtureForge([pullRequest]),
+      getPullRequestSummary: async () => {
+        throw new Error("GitHub replied 503 when fetching acme/shop#7: unavailable");
+      },
+    };
+
+    const [listed] = (await setupReviews([], { db, forge }).reviews.list(pullRequest))!;
+
+    expect(listed).toMatchObject({ id: saved.id, status: "complete" });
+    expect(listed).not.toHaveProperty("outdated");
   });
 
   test("of a Pull Request that doesn't exist are undefined", async () => {

@@ -1,14 +1,14 @@
-import type { ChangedFile, PullRequestSnapshot } from "../forge.ts";
+import type { FixturePullRequest } from "../fixture-forge.ts";
 import type { PlantedProblem } from "./scoring.ts";
 
 /** One fixture Pull Request of the Eval Set, with the Planted Problems a good Review of it should report. */
 export interface EvalFixture {
-  pullRequest: PullRequestSnapshot;
+  pullRequest: FixturePullRequest;
   plantedProblems: PlantedProblem[];
 }
 
 /** A file the Pull Request adds, so line N of the file is `lines[N - 1]`. */
-function newFile(path: string, lines: string[]): ChangedFile {
+function newFile(path: string, lines: string[]): FixturePullRequest["files"][number] {
   return { path, patch: [`@@ -0,0 +1,${lines.length} @@`, ...lines.map((line) => `+${line}`)].join("\n") };
 }
 

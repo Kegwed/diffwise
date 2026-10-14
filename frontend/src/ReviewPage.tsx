@@ -5,7 +5,7 @@ import { Breadcrumb } from "./Breadcrumb.tsx";
 import { Button, Notice, ReviewState } from "./design-system/index.ts";
 import { HeadCommit } from "./HeadCommit.tsx";
 import { ReviewView } from "./ReviewView.tsx";
-import { navigate, pullRequestHref, repositoryHref, reviewHref } from "./route.ts";
+import { githubHref, navigate, pullRequestHref, repositoryHref, reviewHref } from "./route.ts";
 import { useFollowedReview } from "./useFollowedReview.ts";
 import { useLoaded, type Reloaded } from "./useLoaded.ts";
 
@@ -45,7 +45,7 @@ export function ReviewPage({ pullRequest, reviewId }: { pullRequest: PullRequest
   }
 
   return (
-    <section aria-label={current} className="review-page">
+    <section aria-label={current} className="page">
       <Breadcrumb
         above={[
           { label: `${owner}/${repo}`, href: repositoryHref(pullRequest) },
@@ -53,20 +53,21 @@ export function ReviewPage({ pullRequest, reviewId }: { pullRequest: PullRequest
         ]}
         current={current}
       />
-      <div className="card review-head">
-        <div className="review-title">
+      <div className="card head-card">
+        <div className="head-title">
           <div>
             <h2>{name}</h2>
             <p className="caption">
               {owner}/{repo} #{number}
+              {detail.data && ` · ${detail.data.headBranch} into ${detail.data.baseBranch}`}
             </p>
           </div>
-          <a className="dw-btn dw-btn-secondary dw-btn-md" href={`https://github.com/${owner}/${repo}/pull/${number}`}>
+          <a className="dw-btn dw-btn-secondary dw-btn-md" href={githubHref(pullRequest)}>
             Open on GitHub
           </a>
         </div>
         {review && (
-          <dl className="review-details">
+          <dl className="head-details">
             <div>
               <dt>Author</dt>
               <dd>{detail.data?.author ?? "…"}</dd>

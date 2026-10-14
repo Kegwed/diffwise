@@ -1,8 +1,18 @@
-import type { PullRequestRef, PullRequestSummary } from "@diffwise/shared";
-import type { Forge, PullRequestSnapshot } from "./forge.ts";
+import { parsePatch, type PullRequestRef, type PullRequestSummary } from "@diffwise/shared";
+import type { ChangedFile, Forge, PullRequestSnapshot } from "./forge.ts";
+
+/**
+ * A Pull Request as the fixture Forge is given it. What GitHub would count of each file is worked out from its patch,
+ * a file with no patch being binary, and the Pull Request is open into main unless it says otherwise.
+ */
+export interface FixturePullRequest
+  extends Omit<PullRequestSnapshot, "files" | "state" | "baseBranch" | "headBranch">,
+    Partial<Pick<PullRequestSnapshot, "state" | "baseBranch" | "headBranch">> {
+  files: Pick<ChangedFile, "path" | "patch">[];
+}
 
 /** Pull Requests served without GitHub, so Diffwise can be tried before a GitHub App is set up. */
-export const FIXTURE_PULL_REQUESTS: PullRequestSnapshot[] = [
+export const FIXTURE_PULL_REQUESTS: FixturePullRequest[] = [
   {
     owner: "diffwise-fixtures",
     repo: "bookshop",
@@ -10,6 +20,7 @@ export const FIXTURE_PULL_REQUESTS: PullRequestSnapshot[] = [
     title: "Add customer search and order export",
     author: "fixture-author",
     headCommit: "3f9c2e1a7b4d8c6e5f0a1b2c3d4e5f6a7b8c9d0e",
+    headBranch: "customer-search",
     description:
       "Adds a search endpoint for customers by email, and a helper that exports an order to a file. Everything is fully validated and safe.",
     files: [
@@ -62,16 +73,20 @@ export const FIXTURE_PULL_REQUESTS: PullRequestSnapshot[] = [
   },
 ];
 
-export function fixtureForge(pullRequests: PullRequestSnapshot[] = FIXTURE_PULL_REQUESTS): Forge {
+export function fixtureForge(fixtures: FixturePullRequest[] = FIXTURE_PULL_REQUESTS): Forge {
+  // Made as they're read, so a fixture changed in place (as a test pushing a commit does) is served as it then is.
+  const pullRequests = () => fixtures.map(snapshot);
   const find = (ref: PullRequestRef) =>
-    pullRequests.find((pr) => pr.owner === ref.owner && pr.repo === ref.repo && pr.number === ref.number);
+    pullRequests().find((pr) => pr.owner === ref.owner && pr.repo === ref.repo && pr.number === ref.number);
   return {
     async listRepositories() {
-      const repositories = new Map(pullRequests.map(({ owner, repo }) => [`${owner}/${repo}`, { owner, repo }]));
+      const repositories = new Map(pullRequests().map(({ owner, repo }) => [`${owner}/${repo}`, { owner, repo }]));
       return { repositories: [...repositories.values()] };
     },
     async listOpenPullRequests(repository) {
-      return pullRequests.filter((pr) => pr.owner === repository.owner && pr.repo === repository.repo).map(summary);
+      return pullRequests()
+        .filter((pr) => pr.owner === repository.owner && pr.repo === repository.repo && pr.state === "open")
+        .map(summary);
     },
     async getPullRequest(ref) {
       return find(ref);
@@ -83,12 +98,27 @@ export function fixtureForge(pullRequests: PullRequestSnapshot[] = FIXTURE_PULL_
   };
 }
 
+function snapshot({ state = "open", baseBranch = "main", headBranch = "fixture", files, ...pullRequest }: FixturePullRequest): PullRequestSnapshot {
+  return { ...pullRequest, state, baseBranch, headBranch, files: files.map(changedFile) };
+}
+
+function changedFile({ path, patch }: Pick<ChangedFile, "path" | "patch">): ChangedFile {
+  const lines = patch ? parsePatch(patch).flatMap((hunk) => hunk.lines) : [];
+  return {
+    path,
+    patch,
+    additions: lines.filter((line) => line.type === "added").length,
+    deletions: lines.filter((line) => line.type === "removed").length,
+    binary: !patch,
+  };
+}
+
 function summary({ owner, repo, number, title, author, headCommit }: PullRequestSnapshot): PullRequestSummary {
   return { owner, repo, number, title, author, headCommit };
 }
 
 /** Serves the fixture Pull Requests alongside `forge`'s, so they can still be tried once GitHub is connected. */
-export function withFixtures(forge: Forge, pullRequests: PullRequestSnapshot[] = FIXTURE_PULL_REQUESTS): Forge {
+export function withFixtures(forge: Forge, pullRequests: FixturePullRequest[] = FIXTURE_PULL_REQUESTS): Forge {
   const fixtures = fixtureForge(pullRequests);
   return {
     async listRepositories() {
