@@ -26,6 +26,10 @@ export interface FindingProps {
   suggestedFix?: string;
   /** A CWE or OWASP identifier; shown only on a Security Issue. */
   securityReference?: string;
+  /** Beside a diff: makes the location a button that takes you to the Finding's lines. */
+  onShowLines?: () => void;
+  /** The Finding last jumped to: its location button is aria-current and the card takes the accent frame. */
+  linesShown?: boolean;
   className?: string;
 }
 
@@ -40,17 +44,31 @@ export function Finding({
   children,
   suggestedFix,
   securityReference,
+  onShowLines,
+  linesShown,
   className,
 }: FindingProps) {
   const Heading = `h${headingLevel}` as const;
   const location = file && (lines !== undefined ? `${file}:${lines}` : file);
   return (
-    <article className={cx("dw-finding", className)}>
+    <article className={cx("dw-finding", linesShown && "is-shown", className)}>
       <header className="dw-finding-head">
         <Severity severity={severity} />
         <Badge>{KIND_LABELS[kind]}</Badge>
         {kind === "security-issue" && securityReference && <Badge tone="outline">{securityReference}</Badge>}
-        {location && <span className="dw-finding-loc">{location}</span>}
+        {location &&
+          (onShowLines ? (
+            <button
+              type="button"
+              className="dw-finding-loc dw-finding-loc-btn"
+              onClick={onShowLines}
+              aria-current={linesShown ? "true" : undefined}
+            >
+              {location}
+            </button>
+          ) : (
+            <span className="dw-finding-loc">{location}</span>
+          ))}
       </header>
       <div className="dw-finding-body">
         <Heading className="dw-finding-title">{title}</Heading>

@@ -97,11 +97,9 @@ function findingTitles(file: HTMLElement) {
     .map((finding) => within(finding).getByRole("heading", { level: 4 }).textContent);
 }
 
-/** The diff's rows of code (not the rows holding Findings), each with its old and new line number cells. */
+/** The diff's rows: hunk headers, then each line with its old and new line number cells. */
 function codeRows(file: HTMLElement) {
-  return within(file)
-    .getAllByRole("row")
-    .filter((row) => within(row).queryByRole("article") === null);
+  return within(file).getAllByRole("row");
 }
 
 /** The code row showing a line of the new version of the file. */
@@ -109,17 +107,6 @@ function newLineRow(file: HTMLElement, newLine: number) {
   const row = codeRows(file).find((r) => (r as HTMLTableRowElement).cells[1]?.textContent === String(newLine));
   if (!row) throw new Error(`No row for new line ${newLine}`);
   return row as HTMLTableRowElement;
-}
-
-/** The titles of the Findings shown directly beneath a line of the new version of the file, in order. */
-function findingsBeneath(file: HTMLElement, newLine: number) {
-  const titles: (string | null)[] = [];
-  for (let row = newLineRow(file, newLine).nextElementSibling; row; row = row.nextElementSibling) {
-    const finding = within(row as HTMLElement).queryByRole("article");
-    if (!finding) break;
-    titles.push(within(finding).getByRole("heading", { level: 4 }).textContent);
-  }
-  return titles;
 }
 
 const createdGitHubApp: GitHubAppStatus = {
@@ -226,6 +213,190 @@ async function startReview() {
   await userEvent.click(button);
 }
 
+/** The page of the Review that's open. */
+function openedReview() {
+  return screen.findByRole("region", { name: /^Review of / });
+}
+
+/** What the Review's page says about it, by what each detail is ("Author", "Model" ...). */
+function details(page: HTMLElement) {
+  const terms = within(page).getAllByRole("term");
+  const values = within(page).getAllByRole("definition");
+  return Object.fromEntries(terms.map((term, i) => [term.textContent, values[i]!.textContent]));
+}
+
+describe("a Review's page", () => {
+  test("a Review has its own page, leading back to its Pull Request and saying what was reviewed with which Model", async () => {
+    stubApi();
+    window.location.hash = "#/acme/shop/pull/7/reviews/review-1";
+    render(<App />);
+
+    const page = await openedReview();
+    const breadcrumb = screen.getByRole("navigation", { name: "Breadcrumb" });
+    expect(within(breadcrumb).getAllByRole("link").map((link) => [link.textContent, link.getAttribute("href")])).toEqual([
+      ["acme/shop", "#/acme/shop"],
+      ["#7 Add user lookup", "#/acme/shop/pull/7"],
+    ]);
+    expect(within(breadcrumb).getByText("Review of abc1234")).toHaveAttribute("aria-current", "page");
+    expect(await within(page).findByRole("heading", { name: "Add user lookup" })).toBeInTheDocument();
+    expect(within(page).getByRole("link", { name: "Open on GitHub" })).toHaveAttribute("href", "https://github.com/acme/shop/pull/7");
+    await waitFor(() =>
+      expect(details(page)).toEqual({
+        Author: "octocat",
+        "Reviewed commit": "abc1234",
+        Model: "llama3.1:8b on Ollama",
+        State: "Complete",
+        Findings: "3",
+      }),
+    );
+    expect(screen.queryByRole("button", { name: "Review" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Reviews" })).not.toBeInTheDocument();
+  });
+
+  test("while a Review runs, its page shows how many of the files to review are done, not counting skipped ones", async () => {
+    stubApi();
+    const progress = stubProgressStream();
+    window.location.hash = "#/acme/shop/pull/7/reviews/review-1";
+    render(<App />);
+
+    (await progress.followed()).send({
+      type: "review",
+      review: {
+        ...review,
+        status: "running",
+        fileOutcomes: [
+          { file: "package-lock.json", outcome: "skipped", reason: "Lockfile" },
+          { file: "src/users.ts", outcome: "reviewed", patch: usersPatch },
+        ],
+        pendingFiles: [{ file: "src/config.ts", state: "reviewing" }],
+        findings: [review.findings[0]!],
+      },
+    });
+
+    const running = screen.getByRole("status");
+    expect(running).toHaveTextContent(
+      "Reviewing: 1 of 2 files" + "Findings appear as each file finishes. If Diffwise restarts, this Review is lost.",
+    );
+    const bar = within(running).getByRole("progressbar", { name: "Review progress" });
+    expect([bar.getAttribute("aria-valuenow"), bar.getAttribute("aria-valuemax")]).toEqual(["1", "2"]);
+  });
+
+  test("an Unsaved Review's page says it isn't saved, and that a restart loses it", async () => {
+    stubApi();
+    stubProgressStream([{ type: "review", review: { ...review, status: "unsaved" } }]);
+    window.location.hash = "#/acme/shop/pull/7/reviews/review-1";
+    render(<App />);
+
+    expect(await screen.findByRole("note")).toHaveTextContent(
+      "Unsaved" + "This Review has finished but isn't saved. If Diffwise restarts, it is lost.",
+    );
+  });
+
+  test("an Outdated Review's page names the latest commit, and the Model a Review of it would run on", async () => {
+    stubApi();
+    stubProgressStream([{ type: "review", review: { ...review, headCommit: "0ld5678fed" } }, { type: "complete" }]);
+    window.location.hash = "#/acme/shop/pull/7/reviews/review-1";
+    render(<App />);
+
+    const page = await openedReview();
+    const notice = await within(page).findByRole("note");
+    expect(notice).toHaveTextContent(
+      "Outdated" +
+        "New commits were pushed after 0ld5678, so these Findings may not apply to the latest commit. " +
+        "A Review of it runs with the same Model, llama3.1:8b on Ollama." +
+        "Review the latest commit",
+    );
+    expect(within(notice).getByRole("button", { name: "Review the latest commit" })).toHaveClass("dw-btn-primary");
+    expect(details(page)).toMatchObject({ "Reviewed commit": "0ld5678 Latest on GitHub: abc1234", State: "Outdated" });
+  });
+
+  test("each file the Model was given has its own part of the page: its outcome, its Finding count, and its diff once reviewed", async () => {
+    stubApi();
+    const progress = stubProgressStream();
+    window.location.hash = "#/acme/shop/pull/7/reviews/review-1";
+    render(<App />);
+
+    (await progress.followed()).send({
+      type: "review",
+      review: {
+        ...review,
+        status: "running",
+        fileOutcomes: [
+          { file: "src/users.ts", outcome: "reviewed", patch: usersPatch },
+          { file: "src/config.ts", outcome: "reviewed", patch: configPatch },
+          { file: "src/report.ts", outcome: "failed", reason: "Failed twice. First attempt: the Model call timed out after 120s." },
+        ],
+        pendingFiles: [
+          { file: "src/orders.ts", state: "reviewing" },
+          { file: "src/cart.ts", state: "queued" },
+        ],
+        findings: [review.findings[0]!, review.findings[2]!],
+      },
+    });
+
+    const users = screen.getByRole("region", { name: "src/users.ts" });
+    expect(within(users).getByRole("heading", { level: 3 })).toHaveTextContent("src/users.ts");
+    expect(within(users).getByText("Reviewed")).toBeInTheDocument();
+    expect(within(users).getByText("2 Findings")).toBeInTheDocument();
+
+    const config = screen.getByRole("region", { name: "src/config.ts" });
+    expect(within(config).getByText("No Findings")).toBeInTheDocument();
+    expect(within(config).getByRole("table", { name: "Diff of src/config.ts" })).toBeInTheDocument();
+    expect(within(config).getByText("No Findings in the lines this file changes.")).toBeInTheDocument();
+
+    const report = screen.getByRole("region", { name: "src/report.ts" });
+    expect(within(report).getByText("Failed")).toBeInTheDocument();
+    expect(report).toHaveTextContent("Failed twice. First attempt: the Model call timed out after 120s.");
+
+    expect(screen.getByRole("region", { name: "src/orders.ts" })).toHaveTextContent(
+      "Reviewing now. Findings for this file appear when the Model finishes it.",
+    );
+    expect(screen.getByRole("region", { name: "src/cart.ts" })).toHaveTextContent("Queued.");
+  });
+
+  test("skipped files are listed once, at the end, each with why it was skipped", async () => {
+    stubApi({
+      ...review,
+      fileOutcomes: [
+        { file: "package-lock.json", outcome: "skipped", reason: "Lockfile" },
+        { file: "src/users.ts", outcome: "reviewed", patch: usersPatch },
+        { file: "dist/app.min.js", outcome: "skipped", reason: "Minified asset" },
+        { file: "src/config.ts", outcome: "reviewed", patch: configPatch },
+      ],
+    });
+    window.location.hash = "#/acme/shop/pull/7/reviews/review-1";
+    render(<App />);
+
+    const skipped = await screen.findByRole("region", { name: "Skipped files" });
+    expect(
+      within(within(skipped).getByRole("list"))
+        .getAllByRole("listitem")
+        .map((item) => item.textContent),
+    ).toEqual(["package-lock.jsonSkippedLockfile", "dist/app.min.jsSkippedMinified asset"]);
+    expect(screen.queryByRole("region", { name: "package-lock.json" })).not.toBeInTheDocument();
+    const regions = screen.getAllByRole("region").map((region) => region.getAttribute("aria-label") ?? region.textContent);
+    expect(regions.indexOf("src/config.ts")).toBeLessThan(regions.findIndex((name) => /skipped files/i.test(name ?? "")));
+  });
+
+  test("a Review with skipped or failed files says how many of the changed files its Findings cover", async () => {
+    stubApi({
+      ...review,
+      fileOutcomes: [
+        { file: "package-lock.json", outcome: "skipped", reason: "Lockfile" },
+        { file: "src/users.ts", outcome: "reviewed", patch: usersPatch },
+        { file: "src/config.ts", outcome: "reviewed", patch: configPatch },
+        { file: "src/report.ts", outcome: "failed", reason: "Failed twice." },
+      ],
+    });
+    window.location.hash = "#/acme/shop/pull/7/reviews/review-1";
+    render(<App />);
+
+    expect(await screen.findByRole("note")).toHaveTextContent(
+      "Incomplete coverage" + "1 file failed and 1 file was skipped, so these Findings cover 2 of 4 changed files.",
+    );
+  });
+});
+
 describe("browsing to a Pull Request", () => {
   test("the page lists the Repositories the GitHub App is installed on", async () => {
     stubApi();
@@ -304,7 +475,7 @@ describe("browsing to a Pull Request", () => {
         body: JSON.stringify({ pullRequest: { owner: "acme", repo: "shop", number: 7 }, modelProvider: "Ollama", model: "llama3.1:8b" }),
       }),
     );
-    expect(await screen.findByRole("region", { name: /review of acme\/shop#7/i })).toBeInTheDocument();
+    expect(await openedReview()).toBeInTheDocument();
   });
 
   test("the detail view leads back to its Repository's Pull Requests, and to the Repositories", async () => {
@@ -331,7 +502,7 @@ describe("browsing to a Pull Request", () => {
   });
 });
 
-test("reviewing a fixture Pull Request shows each file's diff with every Finding beneath its lines", async () => {
+test("reviewing a fixture Pull Request shows each file's diff with its Findings beside it", async () => {
   const fetch = stubApi();
   await startReview();
 
@@ -344,18 +515,15 @@ test("reviewing a fixture Pull Request shows each file's diff with every Finding
   );
 
   const users = await screen.findByRole("region", { name: "src/users.ts" });
-  expect(findingsBeneath(users, 3)).toEqual(["SQL injection"]);
-  expect(findingsBeneath(users, 6)).toEqual(["Swallowed error"]);
-  expect(findingsBeneath(users, 5)).toEqual([]);
+  expect(within(users).getByRole("table", { name: "Diff of src/users.ts" })).toBeInTheDocument();
+  expect(findingTitles(users)).toEqual(["SQL injection", "Swallowed error"]);
   expect(within(users).getByText("CWE-89")).toBeInTheDocument();
-  expect(within(users).getByText("src/users.ts:3")).toBeInTheDocument();
-  expect(within(users).getByText("src/users.ts:5–6")).toBeInTheDocument();
+  expect(within(users).getByRole("button", { name: "src/users.ts:3" })).toBeInTheDocument();
+  expect(within(users).getByRole("button", { name: "src/users.ts:5–6" })).toBeInTheDocument();
   expect(within(users).getByText("The name is interpolated straight into the SQL string.")).toBeInTheDocument();
   expect(within(users).getByText("Suggested Fix")).toBeInTheDocument();
 
-  const config = screen.getByRole("region", { name: "src/config.ts" });
-  expect(findingsBeneath(config, 1)).toEqual([]);
-  expect(findingsBeneath(config, 2)).toEqual(["Magic number"]);
+  expect(findingTitles(screen.getByRole("region", { name: "src/config.ts" }))).toEqual(["Magic number"]);
 });
 
 test("the diff is GitHub-style: hunk headers, then each line with its old and new line numbers and its marker", async () => {
@@ -378,15 +546,15 @@ test("the diff is GitHub-style: hunk headers, then each line with its old and ne
   ]);
 });
 
-test("the header shows the Model and the head commit the Review covered", async () => {
+test("a started Review's page says which Model reviewed which commit", async () => {
   stubApi();
   await startReview();
 
-  const header = await screen.findByRole("region", { name: /review of acme\/shop#7/i });
-  expect(header).toHaveTextContent(/llama3\.1:8b via Ollama at abc1234/);
+  const page = await openedReview();
+  await waitFor(() => expect(details(page)).toMatchObject({ "Reviewed commit": "abc1234", Model: "llama3.1:8b on Ollama" }));
 });
 
-test("Findings beneath the same line are stacked by Severity, highest first, then by line", async () => {
+test("a file's Findings are ordered by Severity, highest first, then by line", async () => {
   const finding = review.findings[1]!;
   stubApi({
     ...review,
@@ -401,10 +569,10 @@ test("Findings beneath the same line are stacked by Severity, highest first, the
   await startReview();
 
   const config = await screen.findByRole("region", { name: "src/config.ts" });
-  expect(findingsBeneath(config, 2)).toEqual(["Critical at 2", "Medium at 1–2", "Medium at 2", "Low at 2"]);
+  expect(findingTitles(config)).toEqual(["Critical at 2", "Medium at 1–2", "Medium at 2", "Low at 2"]);
 });
 
-test("Findings on lines the diff doesn't show are listed after it, by Severity, highest first, then by line", async () => {
+test("Findings on lines the diff doesn't show are listed with the file's others, by Severity, then by line", async () => {
   const finding = review.findings[1]!;
   stubApi({
     ...review,
@@ -419,9 +587,7 @@ test("Findings on lines the diff doesn't show are listed after it, by Severity, 
   await startReview();
 
   const config = await screen.findByRole("region", { name: "src/config.ts" });
-  expect(findingsBeneath(config, 1)).toEqual(["Low at 1"]);
-  expect(within(config).getByText(/on lines this diff doesn't show/i)).toBeInTheDocument();
-  expect(findingTitles(config)).toEqual(["Low at 1", "Critical at 20", "High at 4", "High at 9"]);
+  expect(findingTitles(config)).toEqual(["Critical at 20", "High at 4", "High at 9", "Low at 1"]);
 });
 
 describe("live progress while a Review runs", () => {
@@ -460,8 +626,8 @@ describe("live progress while a Review runs", () => {
     const config = screen.getByRole("region", { name: "src/config.ts" });
     expect(within(users).getByText("Reviewing")).toHaveClass("dw-badge-neutral");
     expect(within(config).getByText("Queued")).toHaveClass("dw-badge-outline");
-    expect(screen.getByRole("status")).toHaveTextContent("Reviewing: 0 of 2 files done.");
-    expect(screen.getByText("No Findings yet.")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Reviewing: 0 of 2 files");
+    expect(details(await openedReview())).toMatchObject({ Findings: "0 so far" });
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
 
     stream.send({
@@ -471,10 +637,9 @@ describe("live progress while a Review runs", () => {
     });
 
     expect(within(users).getByText("Reviewed")).toBeInTheDocument();
-    expect(findingsBeneath(users, 3)).toEqual(["SQL injection"]);
-    expect(findingsBeneath(users, 6)).toEqual(["Swallowed error"]);
+    expect(findingTitles(users)).toEqual(["SQL injection", "Swallowed error"]);
     expect(within(config).getByText("Queued")).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent("Reviewing: 1 of 2 files done.");
+    expect(screen.getByRole("status")).toHaveTextContent("Reviewing: 1 of 2 files");
     expect(screen.queryByText(/no findings/i)).not.toBeInTheDocument();
 
     stream.send({ type: "file-reviewing", file: "src/config.ts" });
@@ -490,16 +655,16 @@ describe("live progress while a Review runs", () => {
 
     expect(within(config).getByText("Failed")).toBeInTheDocument();
     expect(within(config).getByText(/not valid JSON/)).toBeInTheDocument();
-    expect(screen.getByRole("note")).toHaveTextContent(/1 file failed/i);
-    expect(screen.getByRole("status")).toHaveTextContent("Reviewing: 2 of 2 files done.");
+    expect(screen.getByRole("status")).toHaveTextContent("Reviewing: 2 of 2 files");
 
     stream.send({ type: "complete" });
 
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.getByRole("note")).toHaveTextContent(/1 file failed/i);
     expect(findingTitles(users)).toEqual(["SQL injection", "Swallowed error"]);
   });
 
-  test("no other Review can be started while one runs", async () => {
+  test("a running Review's page says so until it completes, and then stops following it", async () => {
     stubApi();
     const progress = stubProgressStream();
     await startReview();
@@ -507,7 +672,8 @@ describe("live progress while a Review runs", () => {
 
     stream.send({ type: "review", review: running });
 
-    expect(screen.getByRole("button", { name: "Reviewing…" })).toBeDisabled();
+    const page = await openedReview();
+    expect(details(page)).toMatchObject({ State: "Running", Findings: "0 so far" });
 
     stream.send(
       { type: "file-settled", fileOutcome: { file: "src/users.ts", outcome: "reviewed", patch: usersPatch }, findings: [] },
@@ -515,7 +681,7 @@ describe("live progress while a Review runs", () => {
       { type: "complete" },
     );
 
-    expect(screen.getByRole("button", { name: "Review" })).toBeEnabled();
+    expect(details(page)).toMatchObject({ State: "Complete", Findings: "1" });
     expect(stream.readyState).toBe(FakeProgressStream.CLOSED);
   });
 
@@ -528,11 +694,11 @@ describe("live progress while a Review runs", () => {
     stream.send({ type: "review", review: { ...review, status: "running" } }, { type: "unsaved" });
 
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Review" })).toBeEnabled();
+    expect(details(await openedReview())).toMatchObject({ State: "Unsaved" });
     expect(stream.readyState).toBe(FakeProgressStream.CLOSED);
     const notice = screen.getByRole("note");
     expect(within(notice).getByText("Unsaved")).toBeInTheDocument();
-    expect(notice).toHaveTextContent("Diffwise couldn't save this Review, so restarting Diffwise will lose it.");
+    expect(notice).toHaveTextContent("This Review has finished but isn't saved. If Diffwise restarts, it is lost.");
     expect(findingTitles(screen.getByRole("region", { name: "src/users.ts" }))).toEqual(["SQL injection", "Swallowed error"]);
   });
 
@@ -554,7 +720,7 @@ describe("live progress while a Review runs", () => {
     });
 
     expect(stream.url).toBe("/api/reviews/review-1/events");
-    expect(findingsBeneath(screen.getByRole("region", { name: "src/users.ts" }), 3)).toEqual(["SQL injection"]);
+    expect(findingTitles(screen.getByRole("region", { name: "src/users.ts" }))).toEqual(["SQL injection"]);
     const config = screen.getByRole("region", { name: "src/config.ts" });
     expect(within(config).getByText("Reviewing")).toBeInTheDocument();
 
@@ -564,7 +730,7 @@ describe("live progress while a Review runs", () => {
       findings: [magicNumber],
     });
 
-    expect(findingsBeneath(config, 2)).toEqual(["Magic number"]);
+    expect(findingTitles(config)).toEqual(["Magic number"]);
   });
 
   test("when the stream reconnects, the Review as it then stands replaces what the page had", async () => {
@@ -590,19 +756,19 @@ describe("live progress while a Review runs", () => {
 
     expect(findingTitles(screen.getByRole("region", { name: "src/users.ts" }))).toEqual(["SQL injection"]);
     expect(within(screen.getByRole("region", { name: "src/config.ts" })).getByText("Reviewing")).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent("Reviewing: 1 of 2 files done.");
+    expect(screen.getByRole("status")).toHaveTextContent("Reviewing: 1 of 2 files");
   });
 
-  test("leaving the Pull Request stops following the Review", async () => {
+  test("leaving the Review's page stops following the Review", async () => {
     stubApi();
     const progress = stubProgressStream();
     await startReview();
     const stream = await progress.followed();
     stream.send({ type: "review", review: running });
 
-    await userEvent.click(within(screen.getByRole("navigation", { name: "Breadcrumb" })).getByRole("link", { name: "Repositories" }));
+    await userEvent.click(within(screen.getByRole("navigation", { name: "Breadcrumb" })).getByRole("link", { name: "acme/shop" }));
 
-    await screen.findByRole("link", { name: "acme/docs" });
+    await screen.findByRole("heading", { name: /open pull requests in acme\/shop/i });
     expect(stream.readyState).toBe(FakeProgressStream.CLOSED);
   });
 
@@ -617,7 +783,6 @@ describe("live progress while a Review runs", () => {
     stream.fail();
 
     expect(await screen.findByRole("alert")).toHaveTextContent(error);
-    await waitFor(() => expect(screen.getByRole("button", { name: "Review" })).toBeEnabled());
   });
 });
 
@@ -683,18 +848,14 @@ describe("a Pull Request's Reviews", () => {
 
     await userEvent.click(await screen.findByRole("link", { name: "llama3.1:8b via Ollama" }));
 
-    expect(await screen.findByRole("region", { name: /review of acme\/shop#7/i })).toHaveTextContent(/llama3\.1:8b via Ollama at abc1234/);
+    await waitFor(async () => expect(details(await openedReview())).toMatchObject({ Model: "llama3.1:8b on Ollama" }));
     expect(findingTitles(screen.getByRole("region", { name: "src/users.ts" }))).toEqual(["SQL injection", "Swallowed error"]);
-    expect(screen.getByRole("link", { name: "llama3.1:8b via Ollama" })).toHaveAttribute("aria-current", "true");
-    expect(screen.getByRole("link", { name: "gpt-4o via OpenAI-compatible" })).not.toHaveAttribute("aria-current");
 
-    await userEvent.click(screen.getByRole("link", { name: "gpt-4o via OpenAI-compatible" }));
+    await userEvent.click(within(screen.getByRole("navigation", { name: "Breadcrumb" })).getByRole("link", { name: /^#7/ }));
+    await userEvent.click(await screen.findByRole("link", { name: "gpt-4o via OpenAI-compatible" }));
 
-    await waitFor(() =>
-      expect(screen.getByRole("region", { name: /review of acme\/shop#7/i })).toHaveTextContent(/gpt-4o via OpenAI-compatible at abc1234/),
-    );
+    await waitFor(async () => expect(details(await openedReview())).toMatchObject({ Model: "gpt-4o on OpenAI-compatible" }));
     expect(findingTitles(screen.getByRole("region", { name: "src/users.ts" }))).toEqual(["SQL injection"]);
-    expect(screen.getByRole("link", { name: "gpt-4o via OpenAI-compatible" })).toHaveAttribute("aria-current", "true");
     expect(window.location.hash).toBe("#/acme/shop/pull/7/reviews/review-2");
   });
 
@@ -708,10 +869,14 @@ describe("a Pull Request's Reviews", () => {
 
     listed = [running];
     await userEvent.click(await screen.findByRole("button", { name: "Review" }));
+    (await progress.followed()).send({ type: "review", review: { ...review, status: "running" } });
+    await openedReview();
+
+    // Back on the Pull Request's page, the Review is listed as running, and followed until it completes.
+    await userEvent.click(within(screen.getByRole("navigation", { name: "Breadcrumb" })).getByRole("link", { name: /^#7/ }));
+    await waitFor(() => expect(within(reviewRow(/llama3\.1:8b/)).getByText("Running")).toHaveClass("dw-badge-outline"));
     const stream = await progress.followed();
     stream.send({ type: "review", review: { ...review, status: "running" } });
-
-    await waitFor(() => expect(within(reviewRow(/llama3\.1:8b/)).getByText("Running")).toHaveClass("dw-badge-outline"));
 
     listed = [llama];
     stream.send({ type: "complete" });
@@ -720,14 +885,12 @@ describe("a Pull Request's Reviews", () => {
     expect(within(reviewRow(/llama3\.1:8b/)).queryByText("Running")).not.toBeInTheDocument();
   });
 
-  test("a Review that completes while another one is open stops being listed as running", async () => {
+  test("a listed Review that completes stops being listed as running", async () => {
     const byGpt: Review = { ...review, id: "review-2", modelProvider: "OpenAI-compatible", model: "gpt-4o", findings: [review.findings[0]!] };
     let listed: ReviewSummary[] = [{ ...gpt, status: "running" }, llama];
     stubApi(review, modelListing, { [REVIEWS]: () => Response.json(listed) });
     const progress = stubProgressStream();
-    window.location.hash = "#/acme/shop/pull/7/reviews/review-1";
-    render(<App />);
-    (await progress.followed("review-1")).send({ type: "review", review }, { type: "complete" });
+    await openPullRequest();
     await waitFor(() => expect(within(reviewRow(/gpt-4o/)).getByText("Running")).toBeInTheDocument());
 
     listed = [{ ...gpt, findingCounts: { "bad-practice": 0, "security-issue": 1 } }, llama];
@@ -735,18 +898,14 @@ describe("a Pull Request's Reviews", () => {
 
     await waitFor(() => expect(within(reviewRow(/gpt-4o/)).queryByText("Running")).not.toBeInTheDocument());
     expect(reviewRow(/gpt-4o/)).toHaveTextContent("1 Security Issue");
-    // The Review that was open still is.
-    expect(screen.getByRole("region", { name: /review of acme\/shop#7/i })).toHaveTextContent(/llama3\.1:8b via Ollama/);
   });
 
-  test("a Review that turns out Unsaved while another one is open is listed as Unsaved, not running", async () => {
+  test("a listed Review that turns out Unsaved is listed as Unsaved, not running", async () => {
     const byGpt: Review = { ...review, id: "review-2", modelProvider: "OpenAI-compatible", model: "gpt-4o", findings: [review.findings[0]!] };
     let listed: ReviewSummary[] = [{ ...gpt, status: "running" }, llama];
     stubApi(review, modelListing, { [REVIEWS]: () => Response.json(listed) });
     const progress = stubProgressStream();
-    window.location.hash = "#/acme/shop/pull/7/reviews/review-1";
-    render(<App />);
-    (await progress.followed("review-1")).send({ type: "review", review }, { type: "complete" });
+    await openPullRequest();
     await waitFor(() => expect(within(reviewRow(/gpt-4o/)).getByText("Running")).toBeInTheDocument());
 
     listed = [{ ...gpt, status: "unsaved", findingCounts: { "bad-practice": 0, "security-issue": 1 } }, llama];
@@ -779,32 +938,41 @@ describe("a Pull Request's Reviews", () => {
     /** The Review of the latest commit that an Outdated one starts. */
     const fresh: Review = { ...byGpt, id: "review-3", headCommit: pullRequest.headCommit };
 
-    test("the Review is badged Outdated in the list and when opened, and the others aren't", async () => {
-      stubApi(review, modelListing, { [REVIEWS]: () => Response.json([llama, outdatedGpt]) });
+    /** Opens the Review of the earlier head commit directly by its URL. */
+    async function openEarlierReview() {
       stubProgressStream([{ type: "review", review: byGpt }, { type: "complete" }]);
       window.location.hash = "#/acme/shop/pull/7/reviews/review-2";
       render(<App />);
+      return openedReview();
+    }
 
-      const opened = await screen.findByRole("region", { name: /review of acme\/shop#7/i });
-      await waitFor(() => expect(within(opened).getByText("Outdated")).toHaveClass("dw-badge-neutral"));
-      expect(opened).toHaveTextContent(/new commits were pushed/i);
-      expect(within(reviewRow(/gpt-4o/)).getByText("Outdated")).toHaveClass("dw-badge-neutral");
+    test("the Review's page says it's Outdated, and the Pull Request's list badges it and not the others", async () => {
+      stubApi(review, modelListing, { [REVIEWS]: () => Response.json([llama, outdatedGpt]) });
+      const opened = await openEarlierReview();
+
+      await waitFor(() => expect(details(opened)).toMatchObject({ State: "Outdated" }));
+      expect(within(opened).getByRole("note")).toHaveTextContent(/new commits were pushed/i);
+
+      await userEvent.click(within(screen.getByRole("navigation", { name: "Breadcrumb" })).getByRole("link", { name: /^#7/ }));
+
+      await waitFor(() => expect(within(reviewRow(/gpt-4o/)).getByText("Outdated")).toHaveClass("dw-badge-neutral"));
       expect(within(reviewRow(/llama3\.1:8b/)).queryByText("Outdated")).not.toBeInTheDocument();
     });
 
-    test("a Review that isn't Outdated has no badge, and no button to review the latest commit", async () => {
-      stubApi(review, modelListing, { [REVIEWS]: () => Response.json([llama, outdatedGpt]) });
+    test("a Review of the Pull Request's head commit isn't Outdated, and has no button to review the latest commit", async () => {
+      stubApi();
       window.location.hash = "#/acme/shop/pull/7/reviews/review-1";
       render(<App />);
 
-      const opened = await screen.findByRole("region", { name: /review of acme\/shop#7/i });
-      await screen.findByRole("list", { name: "Reviews" });
-      expect(within(opened).queryByText("Outdated")).not.toBeInTheDocument();
+      const opened = await openedReview();
+      await within(opened).findByRole("heading", { name: "Add user lookup" });
+      expect(details(opened)).toMatchObject({ State: "Complete" });
+      expect(within(opened).queryByRole("note")).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "Review the latest commit" })).not.toBeInTheDocument();
     });
 
     test("one click on the Outdated Review starts a Review of the latest commit with the same Model", async () => {
-      const fetch = stubApi(fresh, modelListing, { [REVIEWS]: () => Response.json([llama, outdatedGpt]) });
+      const fetch = stubApi(fresh);
       stubProgressStream((url) => [
         { type: "review", review: url === "/api/reviews/review-3/events" ? fresh : byGpt },
         { type: "complete" },
@@ -822,271 +990,161 @@ describe("a Pull Request's Reviews", () => {
         }),
       );
       await waitFor(() => expect(window.location.hash).toBe("#/acme/shop/pull/7/reviews/review-3"));
-      await waitFor(() =>
-        expect(screen.getByRole("region", { name: /review of acme\/shop#7/i })).toHaveTextContent(/gpt-4o via OpenAI-compatible at abc1234/),
+      await waitFor(async () =>
+        expect(details(await openedReview())).toMatchObject({ "Reviewed commit": "abc1234", Model: "gpt-4o on OpenAI-compatible", State: "Complete" }),
       );
     });
 
-    describe("whether the opened Review is Outdated comes from the Pull Request's head commit, not its list of Reviews", () => {
-      const listFails = () => Response.json({ error: "GitHub replied 503 when fetching acme/shop#7: unavailable" }, { status: 502 });
-
-      /** Opens the Review of the earlier head commit directly by its URL. */
-      async function openEarlierReview() {
-        stubProgressStream([{ type: "review", review: byGpt }, { type: "complete" }]);
-        window.location.hash = "#/acme/shop/pull/7/reviews/review-2";
-        render(<App />);
-        return screen.findByRole("region", { name: /review of acme\/shop#7/i });
-      }
-
-      test("the Review is Outdated, and can review the latest commit with its Model, when the Reviews couldn't be listed", async () => {
-        const fetch = stubApi(byGpt, modelListing, { [REVIEWS]: listFails });
-        const opened = await openEarlierReview();
-
-        await waitFor(() => expect(within(opened).getByText("Outdated")).toHaveClass("dw-badge-neutral"));
-        expect(opened).toHaveTextContent(/new commits were pushed/i);
-        await userEvent.click(within(opened).getByRole("button", { name: "Review the latest commit" }));
-
-        expect(fetch).toHaveBeenCalledWith(
-          "/api/reviews",
-          expect.objectContaining({
-            method: "POST",
-            body: JSON.stringify({ pullRequest: { owner: "acme", repo: "shop", number: 7 }, modelProvider: "OpenAI-compatible", model: "gpt-4o" }),
-          }),
-        );
+    test("the Review says it couldn't be checked, and may be Outdated, when the Pull Request couldn't be loaded", async () => {
+      stubApi(byGpt, modelListing, {
+        "/api/repositories/acme/shop/pull-requests/7": () =>
+          Response.json({ error: "GitHub can't be reached: getaddrinfo ENOTFOUND api.github.com" }, { status: 502 }),
       });
+      const opened = await openEarlierReview();
 
-      test("the Review is Outdated as soon as it and the Pull Request have loaded, while the Reviews are still being listed", async () => {
-        stubApi(byGpt, modelListing, { [REVIEWS]: () => new Promise<Response>(() => {}) as never });
-        const opened = await openEarlierReview();
-
-        expect(await within(opened).findByText("Outdated")).toBeInTheDocument();
-        expect(within(opened).getByRole("button", { name: "Review the latest commit" })).toBeInTheDocument();
-        expect(screen.queryByRole("list", { name: "Reviews" })).not.toBeInTheDocument();
-      });
-
-      test("the Review stays Outdated when the Reviews were listed and then can't be listed again", async () => {
-        let list = () => Response.json([{ ...llama, status: "running" }, outdatedGpt]);
-        stubApi(byGpt, modelListing, { [REVIEWS]: () => list() });
-        const progress = stubProgressStream();
-        window.location.hash = "#/acme/shop/pull/7/reviews/review-2";
-        render(<App />);
-        (await progress.followed("review-2")).send({ type: "review", review: byGpt }, { type: "complete" });
-        const opened = await screen.findByRole("region", { name: /review of acme\/shop#7/i });
-        await screen.findByRole("list", { name: "Reviews" });
-
-        // The other Review completes, so the Reviews are listed again.
-        list = listFails;
-        (await progress.followed("review-1")).send({ type: "review", review: { ...review, status: "running" } }, { type: "complete" });
-
-        await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/GitHub replied 503/));
-        expect(screen.queryByRole("list", { name: "Reviews" })).not.toBeInTheDocument();
-        expect(within(opened).getByText("Outdated")).toBeInTheDocument();
-        expect(within(opened).getByRole("button", { name: "Review the latest commit" })).toBeInTheDocument();
-      });
-
-      test("a Review of the Pull Request's head commit isn't Outdated, whatever the list of Reviews says", async () => {
-        stubApi(review, modelListing, { [REVIEWS]: () => Response.json([{ ...llama, outdated: true }]) });
-        window.location.hash = "#/acme/shop/pull/7/reviews/review-1";
-        render(<App />);
-
-        const opened = await screen.findByRole("region", { name: /review of acme\/shop#7/i });
-        await waitFor(() => expect(within(reviewRow(/llama3\.1:8b/)).getByText("Outdated")).toBeInTheDocument());
-        await screen.findByRole("heading", { name: "Add user lookup" });
-        expect(within(opened).queryByText("Outdated")).not.toBeInTheDocument();
-        expect(within(opened).queryByRole("note")).not.toBeInTheDocument();
-        expect(screen.queryByRole("button", { name: "Review the latest commit" })).not.toBeInTheDocument();
-      });
-
-      test("a Review of the Pull Request's head commit isn't Outdated when the Reviews couldn't be listed", async () => {
-        stubApi(review, modelListing, { [REVIEWS]: listFails });
-        window.location.hash = "#/acme/shop/pull/7/reviews/review-1";
-        render(<App />);
-
-        const opened = await screen.findByRole("region", { name: /review of acme\/shop#7/i });
-        await screen.findByRole("heading", { name: "Add user lookup" });
-        await screen.findByRole("alert");
-        expect(within(opened).queryByRole("note")).not.toBeInTheDocument();
-        expect(screen.queryByRole("button", { name: "Review the latest commit" })).not.toBeInTheDocument();
-      });
-
-      test("the Review says it couldn't be checked, and may be Outdated, when the Pull Request couldn't be loaded", async () => {
-        const unreachable = () => Response.json({ error: "GitHub can't be reached: getaddrinfo ENOTFOUND api.github.com" }, { status: 502 });
-        stubApi(byGpt, modelListing, { "/api/repositories/acme/shop/pull-requests/7": unreachable, [REVIEWS]: unreachable });
-        const opened = await openEarlierReview();
-
-        expect(await within(opened).findByRole("note")).toHaveTextContent(
-          "Diffwise couldn't check whether new commits were pushed to this Pull Request since this Review ran, so it may be Outdated.",
-        );
-        expect(within(opened).queryByText("Outdated")).not.toBeInTheDocument();
-        expect(screen.queryByRole("button", { name: "Review the latest commit" })).not.toBeInTheDocument();
-        expect(screen.getByRole("alert")).toHaveTextContent(/GitHub can't be reached/);
-      });
-
-      test("the Review says nothing about Outdated while the Pull Request is still loading", async () => {
-        let load = (_: Response) => {};
-        const loading = new Promise<Response>((resolve) => (load = resolve));
-        stubApi(byGpt, modelListing, {
-          "/api/repositories/acme/shop/pull-requests/7": () => loading as never,
-          [REVIEWS]: () => Response.json([llama, outdatedGpt]),
-        });
-        const opened = await openEarlierReview();
-        await screen.findByRole("list", { name: "Reviews" });
-
-        expect(within(opened).queryByText("Outdated")).not.toBeInTheDocument();
-        expect(within(opened).queryByRole("note")).not.toBeInTheDocument();
-        expect(screen.queryByRole("button", { name: "Review the latest commit" })).not.toBeInTheDocument();
-
-        load(Response.json(pullRequestDetail));
-
-        expect(await within(opened).findByText("Outdated")).toBeInTheDocument();
-      });
-
-      test("a Review opened after the Pull Request couldn't be loaded says nothing about Outdated while it's loaded again", async () => {
-        let reload = (_: Response) => {};
-        let detail = (): Response | Promise<Response> => Response.json({ error: "GitHub can't be reached" }, { status: 502 });
-        stubApi(review, modelListing, {
-          "/api/repositories/acme/shop/pull-requests/7": () => detail() as never,
-          [REVIEWS]: () => Response.json([llama, outdatedGpt]),
-        });
-        stubProgressStream((url) => [
-          { type: "review", review: url === "/api/reviews/review-1/events" ? review : byGpt },
-          { type: "complete" },
-        ]);
-        window.location.hash = "#/acme/shop/pull/7/reviews/review-2";
-        render(<App />);
-        await within(await screen.findByRole("region", { name: /review of acme\/shop#7/i })).findByRole("note");
-
-        detail = () => new Promise<Response>((resolve) => (reload = resolve));
-        await userEvent.click(await screen.findByRole("link", { name: "llama3.1:8b via Ollama" }));
-
-        const opened = await screen.findByRole("region", { name: /review of acme\/shop#7/i });
-        expect(opened).toHaveTextContent(/llama3\.1:8b via Ollama at abc1234/);
-        expect(within(opened).queryByRole("note")).not.toBeInTheDocument();
-
-        reload(Response.json(pullRequestDetail));
-
-        await screen.findByRole("heading", { name: "Add user lookup" });
-        expect(within(opened).queryByRole("note")).not.toBeInTheDocument();
-        expect(within(opened).queryByText("Outdated")).not.toBeInTheDocument();
-      });
-
-      test("a Review just started of the latest commit says nothing about Outdated while the Pull Request is loaded again", async () => {
-        // The page was opened before the new commits were pushed, on a Review of a commit earlier still.
-        let reload = (_: Response) => {};
-        let detail = (): Response | Promise<Response> => Response.json({ ...pullRequestDetail, headCommit: oldCommit });
-        stubApi(fresh, modelListing, { "/api/repositories/acme/shop/pull-requests/7": () => detail() as never });
-        stubProgressStream((url) => [
-          { type: "review", review: url === "/api/reviews/review-3/events" ? fresh : earlier },
-          { type: "complete" },
-        ]);
-        window.location.hash = "#/acme/shop/pull/7/reviews/review-2";
-        render(<App />);
-
-        detail = () => new Promise<Response>((resolve) => (reload = resolve));
-        await userEvent.click(await screen.findByRole("button", { name: "Review the latest commit" }));
-
-        const opened = screen.getByRole("region", { name: /review of acme\/shop#7/i });
-        await waitFor(() => expect(opened).toHaveTextContent(/gpt-4o via OpenAI-compatible at abc1234/));
-        expect(within(opened).queryByText("Outdated")).not.toBeInTheDocument();
-        expect(within(opened).queryByRole("note")).not.toBeInTheDocument();
-
-        reload(Response.json(pullRequestDetail));
-
-        await waitFor(() => expect(screen.getByRole("region", { name: "Add user lookup" })).toHaveTextContent("by octocat at abc1234"));
-        expect(within(opened).queryByText("Outdated")).not.toBeInTheDocument();
-      });
+      expect(await within(opened).findByRole("note")).toHaveTextContent(
+        "Diffwise couldn't check whether new commits were pushed to this Pull Request since this Review ran, so it may be Outdated.",
+      );
+      expect(details(opened)).toMatchObject({ State: "Complete" });
+      expect(screen.queryByRole("button", { name: "Review the latest commit" })).not.toBeInTheDocument();
+      expect(screen.getByRole("alert")).toHaveTextContent(/GitHub can't be reached/);
     });
 
-    test("the Pull Request is shown as it is now once a Review of the latest commit is started", async () => {
-      // The page was opened before the new commits were pushed, on a Review of a commit earlier still.
-      let current: PullRequestDetail = { ...pullRequestDetail, headCommit: oldCommit };
-      stubApi(fresh, modelListing, {
-        "/api/repositories/acme/shop/pull-requests/7": () => Response.json(current),
-        [REVIEWS]: () => Response.json([{ ...outdatedGpt, headCommit: earlier.headCommit }]),
+    test("the Review says nothing about Outdated while the Pull Request is still loading", async () => {
+      let load = (_: Response) => {};
+      const loading = new Promise<Response>((resolve) => (load = resolve));
+      stubApi(byGpt, modelListing, { "/api/repositories/acme/shop/pull-requests/7": () => loading as never });
+      const opened = await openEarlierReview();
+      await waitFor(() => expect(details(opened)).toMatchObject({ State: "Complete" }));
+
+      expect(within(opened).queryByRole("note")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Review the latest commit" })).not.toBeInTheDocument();
+
+      load(Response.json(pullRequestDetail));
+
+      await waitFor(() => expect(details(opened)).toMatchObject({ State: "Outdated" }));
+    });
+
+    test("a Review opened after the Pull Request couldn't be loaded says nothing about Outdated while it's loaded again", async () => {
+      let reload = (_: Response) => {};
+      let detail = (): Response | Promise<Response> => Response.json({ error: "GitHub can't be reached" }, { status: 502 });
+      stubApi(review, modelListing, { "/api/repositories/acme/shop/pull-requests/7": () => detail() as never });
+      stubProgressStream((url) => [
+        { type: "review", review: url === "/api/reviews/review-1/events" ? review : byGpt },
+        { type: "complete" },
+      ]);
+      window.location.hash = "#/acme/shop/pull/7/reviews/review-2";
+      render(<App />);
+      await within(await openedReview()).findByRole("note");
+
+      detail = () => new Promise<Response>((resolve) => (reload = resolve));
+      act(() => {
+        window.location.hash = "#/acme/shop/pull/7/reviews/review-1";
       });
+
+      const opened = await screen.findByRole("region", { name: "Review of abc1234" });
+      await waitFor(() => expect(details(opened)).toMatchObject({ Model: "llama3.1:8b on Ollama" }));
+      expect(within(opened).queryByRole("note")).not.toBeInTheDocument();
+
+      reload(Response.json(pullRequestDetail));
+
+      await within(opened).findByRole("heading", { name: "Add user lookup" });
+      expect(within(opened).queryByRole("note")).not.toBeInTheDocument();
+      expect(details(opened)).toMatchObject({ State: "Complete" });
+    });
+
+    test("a Review just started of the latest commit says nothing about Outdated while the Pull Request is loaded again", async () => {
+      // The page was opened before the new commits were pushed, on a Review of a commit earlier still.
+      let reload = (_: Response) => {};
+      let detail = (): Response | Promise<Response> => Response.json({ ...pullRequestDetail, headCommit: oldCommit });
+      stubApi(fresh, modelListing, { "/api/repositories/acme/shop/pull-requests/7": () => detail() as never });
       stubProgressStream((url) => [
         { type: "review", review: url === "/api/reviews/review-3/events" ? fresh : earlier },
         { type: "complete" },
       ]);
       window.location.hash = "#/acme/shop/pull/7/reviews/review-2";
       render(<App />);
-      const header = await screen.findByRole("region", { name: "Add user lookup" });
-      expect(header).toHaveTextContent("by octocat at 0ld5678");
 
-      current = { ...pullRequestDetail, changedFiles: [...pullRequestDetail.changedFiles, "src/orders.ts"] };
+      detail = () => new Promise<Response>((resolve) => (reload = resolve));
       await userEvent.click(await screen.findByRole("button", { name: "Review the latest commit" }));
 
-      await waitFor(() => expect(header).toHaveTextContent("by octocat at abc1234"));
-      expect(within(header).getByRole("list", { name: /changed files/i })).toHaveTextContent("src/orders.ts");
+      const opened = await screen.findByRole("region", { name: "Review of abc1234" });
+      await waitFor(() => expect(details(opened)).toMatchObject({ Model: "gpt-4o on OpenAI-compatible", State: "Complete" }));
+      expect(within(opened).queryByRole("note")).not.toBeInTheDocument();
+
+      reload(Response.json(pullRequestDetail));
+
+      await within(opened).findByRole("heading", { name: "Add user lookup" });
+      expect(details(opened)).toMatchObject({ State: "Complete" });
+      expect(within(opened).queryByRole("note")).not.toBeInTheDocument();
     });
   });
 });
 
-describe("the Findings panel", () => {
-  /** Starts the Review and gives its Findings panel, next to the diff. */
-  async function openPanel(startedReview: Review = review) {
+describe("filtering Findings and jumping to their lines", () => {
+  /** Starts the Review and gives the filters above its files. */
+  async function openFilters(startedReview: Review = review) {
     stubApi(startedReview);
     await startReview();
-    return screen.findByRole("complementary", { name: "Findings" });
+    return screen.findByRole("region", { name: "Filter Findings" });
   }
 
-  /** What each button of one of the panel's filters says, in order: what it filters by, then its count of Findings. */
-  function filterButtons(panel: HTMLElement, filter: string) {
-    return within(within(panel).getByRole("group", { name: filter }))
+  /** What each button of one of the filters says, in order: what it filters by, then its count of Findings. */
+  function filterButtons(filters: HTMLElement, filter: string) {
+    return within(within(filters).getByRole("group", { name: filter }))
       .getAllByRole("button")
       .map((button) => button.textContent);
   }
 
-  /** What each Finding in the panel's list says, in order. */
-  function listedFindings(panel: HTMLElement) {
-    return within(within(panel).getByRole("list"))
-      .getAllByRole("listitem")
-      .map((finding) => finding.textContent);
+  /** The new line numbers of the diff's rows that a shown Finding covers. */
+  function markedLines(file: HTMLElement) {
+    return codeRows(file)
+      .filter((row) => row.classList.contains("diff-marked"))
+      .map((row) => (row as HTMLTableRowElement).cells[1]?.textContent);
   }
 
-  test("the panel shows how many Findings the Review reports of each kind and of each Severity", async () => {
-    const panel = await openPanel();
+  test("the filters count the Findings the Review reports of each kind and of each Severity", async () => {
+    const filters = await openFilters();
 
-    expect(filterButtons(panel, "Kind")).toEqual(["Security Issue 1", "Bad Practices 2"]);
-    expect(filterButtons(panel, "Severity")).toEqual(["Critical 1", "High 0", "Medium 1", "Low 1"]);
+    expect(filterButtons(filters, "Kind")).toEqual(["Security Issue 1", "Bad Practices 2"]);
+    expect(filterButtons(filters, "Severity")).toEqual(["Critical 1", "High 0", "Medium 1", "Low 1"]);
   });
 
-  test("the panel lists the Findings in the order the diff shows them, each with its Severity, title and lines", async () => {
-    const panel = await openPanel();
+  test("the lines each shown Finding covers are marked in its file's diff", async () => {
+    await openFilters();
 
-    expect(listedFindings(panel)).toEqual([
-      "Critical SQL injection src/users.ts:3",
-      "Medium Swallowed error src/users.ts:5–6",
-      "Low Magic number src/config.ts:1–2",
-    ]);
+    expect(markedLines(screen.getByRole("region", { name: "src/users.ts" }))).toEqual(["3", "5", "6"]);
+    expect(markedLines(screen.getByRole("region", { name: "src/config.ts" }))).toEqual(["1", "2"]);
   });
 
-  test("filtering by kind hides the Findings of the other kind, in the panel and in the diff", async () => {
-    const panel = await openPanel();
-    const securityIssues = within(panel).getByRole("button", { name: /security issue/i });
+  test("filtering by kind hides the other kind's Findings and their marks, and says what a file has hidden", async () => {
+    const filters = await openFilters();
+    const securityIssues = within(filters).getByRole("button", { name: /security issue/i });
     expect(securityIssues).toHaveAttribute("aria-pressed", "false");
 
     await userEvent.click(securityIssues);
 
     expect(securityIssues).toHaveAttribute("aria-pressed", "true");
-    expect(listedFindings(panel)).toEqual(["Critical SQL injection src/users.ts:3"]);
-    expect(findingTitles(screen.getByRole("region", { name: "src/users.ts" }))).toEqual(["SQL injection"]);
+    const users = screen.getByRole("region", { name: "src/users.ts" });
+    expect(findingTitles(users)).toEqual(["SQL injection"]);
+    expect(markedLines(users)).toEqual(["3"]);
     const config = screen.getByRole("region", { name: "src/config.ts" });
     expect(within(config).queryByRole("article")).not.toBeInTheDocument();
+    expect(markedLines(config)).toEqual([]);
+    expect(config).toHaveTextContent("1 Finding hidden by the filters above.");
     expect(within(config).getByRole("table", { name: "Diff of src/config.ts" })).toBeInTheDocument();
     // The counts stay the Review's, whatever is hidden.
-    expect(filterButtons(panel, "Kind")).toEqual(["Security Issue 1", "Bad Practices 2"]);
+    expect(filterButtons(filters, "Kind")).toEqual(["Security Issue 1", "Bad Practices 2"]);
 
     await userEvent.click(securityIssues);
 
     expect(securityIssues).toHaveAttribute("aria-pressed", "false");
-    expect(listedFindings(panel)).toHaveLength(3);
-    expect(findingsBeneath(config, 2)).toEqual(["Magic number"]);
+    expect(findingTitles(config)).toEqual(["Magic number"]);
   });
 
   test("filtering by Severity hides the Findings of the other Severities, and narrows the kind filter further", async () => {
-    const panel = await openPanel();
-    const severities = within(panel).getByRole("group", { name: "Severity" });
+    const filters = await openFilters();
+    const severities = within(filters).getByRole("group", { name: "Severity" });
     const users = screen.getByRole("region", { name: "src/users.ts" });
     const config = screen.getByRole("region", { name: "src/config.ts" });
 
@@ -1095,27 +1153,15 @@ describe("the Findings panel", () => {
 
     expect(within(severities).getByRole("button", { name: /critical/i })).toHaveAttribute("aria-pressed", "true");
     expect(within(severities).getByRole("button", { name: /medium/i })).toHaveAttribute("aria-pressed", "false");
-    expect(listedFindings(panel)).toEqual(["Critical SQL injection src/users.ts:3", "Low Magic number src/config.ts:1–2"]);
     expect(findingTitles(users)).toEqual(["SQL injection"]);
-    expect(findingsBeneath(config, 2)).toEqual(["Magic number"]);
-    expect(filterButtons(panel, "Severity")).toEqual(["Critical 1", "High 0", "Medium 1", "Low 1"]);
+    expect(findingTitles(config)).toEqual(["Magic number"]);
+    expect(filterButtons(filters, "Severity")).toEqual(["Critical 1", "High 0", "Medium 1", "Low 1"]);
 
-    await userEvent.click(within(panel).getByRole("button", { name: /bad practice/i }));
+    await userEvent.click(within(filters).getByRole("button", { name: /bad practice/i }));
 
-    expect(listedFindings(panel)).toEqual(["Low Magic number src/config.ts:1–2"]);
     expect(within(users).queryByRole("article")).not.toBeInTheDocument();
-    expect(findingsBeneath(config, 2)).toEqual(["Magic number"]);
-  });
-
-  test("when the filters hide every Finding, the panel says so", async () => {
-    const panel = await openPanel();
-
-    await userEvent.click(within(panel).getByRole("button", { name: /security issue/i }));
-    await userEvent.click(within(panel).getByRole("button", { name: /low/i }));
-
-    expect(within(panel).getByText("No Findings match the filters.")).toBeInTheDocument();
-    expect(within(panel).queryByRole("list")).not.toBeInTheDocument();
-    expect(screen.queryByRole("article")).not.toBeInTheDocument();
+    expect(users).toHaveTextContent("2 Findings hidden by the filters above.");
+    expect(findingTitles(config)).toEqual(["Magic number"]);
   });
 
   describe("jumping to a Finding", () => {
@@ -1135,28 +1181,30 @@ describe("the Findings panel", () => {
       return scrolledTo;
     }
 
-    /** The new line numbers of the diff's highlighted rows of code. */
+    /** The new line numbers of the diff's rows highlighted as the lines jumped to. */
     function highlightedLines(file: HTMLElement) {
       return codeRows(file)
         .filter((row) => row.classList.contains("diff-highlighted"))
         .map((row) => (row as HTMLTableRowElement).cells[1]?.textContent);
     }
 
-    test("clicking a Finding in the panel scrolls the diff to its lines and highlights them", async () => {
+    test("clicking a Finding's location scrolls its diff to its lines, highlights them and focuses the first", async () => {
       const scrolledTo = stubScrolling();
-      const panel = await openPanel();
+      await openFilters();
       const users = screen.getByRole("region", { name: "src/users.ts" });
       const config = screen.getByRole("region", { name: "src/config.ts" });
-      const swallowedError = within(panel).getByRole("button", { name: /swallowed error/i });
+      const swallowedError = within(users).getByRole("button", { name: "src/users.ts:5–6" });
       expect(highlightedLines(users)).toEqual([]);
 
       await userEvent.click(swallowedError);
 
       expect(scrolledTo).toEqual([newLineRow(users, 5)]);
+      expect(newLineRow(users, 5)).toHaveFocus();
       expect(highlightedLines(users)).toEqual(["5", "6"]);
       expect(swallowedError).toHaveAttribute("aria-current", "true");
+      expect(swallowedError.closest("article")).toHaveClass("is-shown");
 
-      await userEvent.click(within(panel).getByRole("button", { name: /magic number/i }));
+      await userEvent.click(within(config).getByRole("button", { name: "src/config.ts:1–2" }));
 
       expect(scrolledTo).toEqual([newLineRow(users, 5), newLineRow(config, 1)]);
       expect(highlightedLines(config)).toEqual(["1", "2"]);
@@ -1166,11 +1214,11 @@ describe("the Findings panel", () => {
 
     test("clicking the same Finding again scrolls back to its lines", async () => {
       const scrolledTo = stubScrolling();
-      const panel = await openPanel();
+      await openFilters();
       const users = screen.getByRole("region", { name: "src/users.ts" });
 
-      await userEvent.click(within(panel).getByRole("button", { name: /sql injection/i }));
-      await userEvent.click(within(panel).getByRole("button", { name: /sql injection/i }));
+      await userEvent.click(within(users).getByRole("button", { name: "src/users.ts:3" }));
+      await userEvent.click(within(users).getByRole("button", { name: "src/users.ts:3" }));
 
       expect(scrolledTo).toEqual([newLineRow(users, 3), newLineRow(users, 3)]);
       expect(highlightedLines(users)).toEqual(["3"]);
@@ -1178,14 +1226,14 @@ describe("the Findings panel", () => {
 
     test("a Finding on lines the diff doesn't show is scrolled to itself", async () => {
       const scrolledTo = stubScrolling();
-      const panel = await openPanel({
+      await openFilters({
         ...review,
         fileOutcomes: [{ file: "src/config.ts", outcome: "reviewed", patch: configPatch }],
         findings: [{ ...review.findings[1]!, startLine: 9, endLine: 9, title: "Past the end" }],
       });
       const config = screen.getByRole("region", { name: "src/config.ts" });
 
-      await userEvent.click(within(panel).getByRole("button", { name: /past the end/i }));
+      await userEvent.click(within(config).getByRole("button", { name: "src/config.ts:9" }));
 
       expect(scrolledTo).toHaveLength(1);
       expect(scrolledTo[0]).toContainElement(within(config).getByRole("article"));
@@ -1195,12 +1243,12 @@ describe("the Findings panel", () => {
 
     test("the lines of a Finding the filters then hide are no longer highlighted", async () => {
       stubScrolling();
-      const panel = await openPanel();
+      const filters = await openFilters();
       const users = screen.getByRole("region", { name: "src/users.ts" });
-      await userEvent.click(within(panel).getByRole("button", { name: /swallowed error/i }));
+      await userEvent.click(within(users).getByRole("button", { name: "src/users.ts:5–6" }));
       expect(highlightedLines(users)).toEqual(["5", "6"]);
 
-      await userEvent.click(within(panel).getByRole("button", { name: /security issue/i }));
+      await userEvent.click(within(filters).getByRole("button", { name: /security issue/i }));
 
       expect(highlightedLines(users)).toEqual([]);
     });
@@ -1225,7 +1273,7 @@ test.each([
     "1+export const timeout = 30000;",
     "2+export const retries = 3;",
   ]);
-  expect(within(config).getByText(/on lines this diff doesn't show/i)).toBeInTheDocument();
+  expect(findingTitles(config)).toEqual(["Past the end"]);
 });
 
 test("a Review saved before diffs were kept lists each file's Findings without a diff", async () => {
@@ -1244,11 +1292,14 @@ test("a Review saved before diffs were kept lists each file's Findings without a
   expect(findingTitles(users)).toEqual(["SQL injection", "Swallowed error"]);
 });
 
-test("a Review with no Findings says so", async () => {
+test("a Review with no Findings says so, for itself and for each file", async () => {
   stubApi({ ...review, findings: [] });
   await startReview();
 
-  expect(await screen.findByText(/no findings/i)).toBeInTheDocument();
+  await waitFor(async () => expect(details(await openedReview())).toMatchObject({ Findings: "0" }));
+  for (const file of ["src/users.ts", "src/config.ts"]) {
+    expect(screen.getByRole("region", { name: file })).toHaveTextContent("No Findings in the lines this file changes.");
+  }
   expect(screen.queryByRole("complementary", { name: "Findings" })).not.toBeInTheDocument();
 });
 
@@ -1268,10 +1319,10 @@ test("skipped and failed files show their outcome and reason instead of a diff, 
   expect(within(users).getByText("Reviewed")).toHaveClass("dw-badge-outline");
   expect(within(users).getByRole("table", { name: "Diff of src/users.ts" })).toBeInTheDocument();
 
-  const lockfile = screen.getByRole("region", { name: "package-lock.json" });
-  expect(within(lockfile).getByText("Skipped")).toHaveClass("dw-badge-neutral");
-  expect(within(lockfile).getByText("Lockfile")).toBeInTheDocument();
-  expect(within(lockfile).queryByRole("table")).not.toBeInTheDocument();
+  const skipped = screen.getByRole("region", { name: "Skipped files" });
+  expect(within(skipped).getByText("Skipped")).toHaveClass("dw-badge-neutral");
+  expect(within(skipped).getByText("Lockfile")).toBeInTheDocument();
+  expect(within(skipped).queryByRole("table")).not.toBeInTheDocument();
 
   const report = screen.getByRole("region", { name: "src/report.ts" });
   expect(within(report).getByText("Failed")).toHaveClass("dw-badge-neutral");
@@ -1280,7 +1331,7 @@ test("skipped and failed files show their outcome and reason instead of a diff, 
 
   const notice = screen.getByRole("note");
   expect(notice).toHaveTextContent(/incomplete coverage/i);
-  expect(notice).toHaveTextContent(/1 file skipped/i);
+  expect(notice).toHaveTextContent(/1 file was skipped/i);
   expect(notice).toHaveTextContent(/1 file failed/i);
 });
 
@@ -1312,7 +1363,7 @@ test("the Model dropdown groups Models by Model Provider, and the Review runs on
       body: JSON.stringify({ pullRequest: { owner: "acme", repo: "shop", number: 7 }, modelProvider: "OpenAI-compatible", model: "gpt-4o" }),
     }),
   );
-  expect(await screen.findByRole("region", { name: /review of/i })).toHaveTextContent(/gpt-4o via OpenAI-compatible/);
+  await waitFor(async () => expect(details(await openedReview())).toMatchObject({ Model: "gpt-4o on OpenAI-compatible" }));
 });
 
 test("an unavailable Model Provider is shown with its reason, and the others' Models can still be chosen", async () => {
@@ -1343,6 +1394,61 @@ test.each<[string, ModelProviderListing[], RegExp]>([
   expect(await screen.findByText(explanation)).toBeInTheDocument();
   expect(screen.queryByRole("combobox", { name: /model/i })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Review" })).toBeDisabled();
+});
+
+/** The header's connection statuses, as their text reads. */
+async function connections() {
+  const list = await screen.findByRole("list", { name: "Connections" });
+  return within(list)
+    .getAllByRole("listitem")
+    .map((item) => item.textContent);
+}
+
+describe("the page header", () => {
+  test("every view has the Diffwise name linking to the first page, and says GitHub is connected once the App is created", async () => {
+    stubApi();
+    await openPullRequest();
+
+    expect(within(screen.getByRole("banner")).getByRole("link", { name: "Diffwise" })).toHaveAttribute("href", "#/");
+    await waitFor(async () => expect(await connections()).toContain("GitHub connected"));
+  });
+
+  test("with no GitHub App created, the header says GitHub isn't connected", async () => {
+    stubApi(review, modelListing, { "/api/github-app": () => Response.json({ status: "not-created" }) });
+    await openPullRequest();
+
+    await waitFor(async () => expect(await connections()).toContain("GitHub not connected"));
+  });
+
+  test("the header says, for each Model Provider, whether it's connected or unavailable", async () => {
+    stubApi(review, [
+      { modelProvider: "Ollama", status: "available", models: ["llama3.1:8b"] },
+      { modelProvider: "OpenAI-compatible", status: "unavailable", reason: "Couldn't reach https://llm.example/v1." },
+    ]);
+    await openPullRequest();
+
+    await waitFor(async () =>
+      expect(await connections()).toEqual(["GitHub connected", "Ollama connected", "OpenAI-compatible unavailable"]),
+    );
+  });
+
+  test("until it hears back, the header says it's checking GitHub and the Model Providers", async () => {
+    const fetch = stubApi();
+    fetch.mockImplementation(() => new Promise<Response>(() => {}));
+    render(<App />);
+
+    expect(await connections()).toEqual(["Checking GitHub", "Checking Model Providers"]);
+  });
+
+  test("on the first view, when GitHub couldn't list the Repositories, the header says GitHub is unreachable", async () => {
+    stubApi(review, modelListing, {
+      "/api/repositories": () => Response.json({ repositories: [], unlisted: "GitHub didn't answer." }),
+    });
+    render(<App />);
+
+    await waitFor(async () => expect(await connections()).toContain("GitHub unreachable"));
+    expect(await connections()).not.toContain("GitHub connected");
+  });
 });
 
 describe("connecting to GitHub", () => {

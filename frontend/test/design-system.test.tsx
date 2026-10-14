@@ -1,7 +1,7 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { expect, test } from "vitest";
-import { Badge, Button, Finding, Severity } from "../src/design-system/index.ts";
+import { expect, test, vi } from "vitest";
+import { Badge, Button, ConnectionStatus, Finding, Notice, ReviewState, Severity } from "../src/design-system/index.ts";
 
 test.each([
   ["critical", "Critical", 4],
@@ -90,4 +90,58 @@ test("Badge is neutral by default", () => {
   render(<Badge>Skipped</Badge>);
 
   expect(screen.getByText("Skipped")).toHaveClass("dw-badge", "dw-badge-neutral");
+});
+
+test("a ConnectionStatus reads without colour: its text says the state, and its dot is hidden from screen readers", () => {
+  const { container } = render(
+    <ul aria-label="Connections">
+      <li>
+        <ConnectionStatus status="error">GitHub unreachable</ConnectionStatus>
+      </li>
+    </ul>,
+  );
+
+  expect(screen.getByRole("listitem")).toHaveTextContent(/^GitHub unreachable$/);
+  expect(container.querySelector(".dw-conn-dot")).toHaveAttribute("aria-hidden", "true");
+});
+
+test.each([
+  ["running", "Running"],
+  ["complete", "Complete"],
+  ["unsaved", "Unsaved"],
+  ["outdated", "Outdated"],
+] as const)("a %s ReviewState reads without colour: it says %s, beside a marker hidden from screen readers", (state, label) => {
+  const { container } = render(<ReviewState state={state} />);
+
+  expect(container.firstElementChild).toHaveTextContent(new RegExp(`^${label}$`));
+  expect(container.querySelector(".dw-state-mark")).toHaveAttribute("aria-hidden", "true");
+});
+
+test("a Notice names the situation, says what it means, and offers its one action", async () => {
+  const onClick = vi.fn();
+  render(
+    <Notice role="note" title="Outdated" action={<Button onClick={onClick}>Review the latest commit</Button>}>
+      New commits were pushed since this Review ran.
+    </Notice>,
+  );
+
+  const notice = screen.getByRole("note");
+  expect(notice).toHaveTextContent(/^OutdatedNew commits were pushed since this Review ran\.Review the latest commit$/);
+  await userEvent.click(within(notice).getByRole("button", { name: "Review the latest commit" }));
+  expect(onClick).toHaveBeenCalledOnce();
+});
+
+test("beside a diff, a Finding's location is a button to its lines, current when its lines are the ones shown", async () => {
+  const onShowLines = vi.fn();
+  const { rerender } = render(
+    <Finding kind="bad-practice" severity="low" title="Magic number" file="src/config.ts" lines="1–2" onShowLines={onShowLines} />,
+  );
+
+  const location = screen.getByRole("button", { name: "src/config.ts:1–2" });
+  expect(location).not.toHaveAttribute("aria-current");
+  await userEvent.click(location);
+  expect(onShowLines).toHaveBeenCalledOnce();
+
+  rerender(<Finding kind="bad-practice" severity="low" title="Magic number" file="src/config.ts" lines="1–2" onShowLines={onShowLines} linesShown />);
+  expect(screen.getByRole("button", { name: "src/config.ts:1–2" })).toHaveAttribute("aria-current", "true");
 });
