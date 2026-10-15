@@ -112,7 +112,7 @@ a {
   box-shadow: var(--focus-ring);
 }
 
-/* Rows: the Repositories and a Repository's open Pull Requests */
+/* Rows: the Repositories */
 
 .rows {
   list-style: none;
@@ -329,6 +329,88 @@ a {
   }
 
   .review-row-head {
+    display: none;
+  }
+}
+
+/* A Repository's page: its name, then its open Pull Requests, a row each with its latest Review. */
+
+.repository-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.repository-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+.repository-title h2 {
+  margin: 0;
+  font: var(--type-title);
+  letter-spacing: var(--type-title-letter-spacing);
+  overflow-wrap: anywhere;
+}
+
+.open-pull-requests {
+  overflow: hidden;
+}
+
+.open-pull-requests ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.open-pull-requests-note {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+}
+
+.pull-request-row {
+  display: grid;
+  grid-template-columns: minmax(240px, 3fr) minmax(140px, 1fr) minmax(180px, 1.4fr);
+  align-items: start;
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
+
+.pull-request-row-head {
+  padding-block: var(--space-2);
+}
+
+.pull-request-row-title,
+.pull-request-row-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+
+.pull-request-row-title a {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.pull-request-row-cell {
+  gap: var(--space-1);
+}
+
+@media (max-width: 900px) {
+  .pull-request-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .pull-request-row-title {
+    grid-column: 1 / -1;
+  }
+
+  .pull-request-row-head {
     display: none;
   }
 }

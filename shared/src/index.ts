@@ -5,6 +5,13 @@ export interface RepositoryRef {
   repo: string;
 }
 
+/** The Repository of Pull Requests that ships with Diffwise, so a Review can be tried without connecting GitHub. */
+export const FIXTURE_REPOSITORY: RepositoryRef = { owner: "diffwise-fixtures", repo: "bookshop" };
+
+export function isFixtureRepository({ owner, repo }: RepositoryRef): boolean {
+  return owner === FIXTURE_REPOSITORY.owner && repo === FIXTURE_REPOSITORY.repo;
+}
+
 /** The Repositories Diffwise can read Pull Requests from. */
 export interface RepositoryListing {
   repositories: RepositoryRef[];
@@ -20,6 +27,17 @@ export interface PullRequestSummary extends PullRequestRef {
   title: string;
   author: string;
   headCommit: string;
+  /** The branch it would merge into. */
+  baseBranch: string;
+  /** The branch its changes are on. */
+  headBranch: string;
+  /** When it last changed, as GitHub records it. */
+  updatedAt: string;
+}
+
+/** An open Pull Request as its Repository's listing shows it: with its latest Review, if it has any. */
+export interface OpenPullRequest extends PullRequestSummary {
+  latestReview?: ReviewSummary;
 }
 
 /** One file a Pull Request changes, with how many lines it adds and deletes, as GitHub counts them. */
@@ -34,10 +52,6 @@ export interface ChangedFileStat {
 /** What the user sees of a Pull Request before starting a Review of it. */
 export interface PullRequestDetail extends PullRequestSummary {
   state: "open" | "closed" | "merged";
-  /** The branch it would merge into. */
-  baseBranch: string;
-  /** The branch its changes are on. */
-  headBranch: string;
   /** The files it changes, in the Pull Request's file order. */
   changedFiles: ChangedFileStat[];
 }

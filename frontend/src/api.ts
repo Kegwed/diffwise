@@ -5,7 +5,7 @@ import type {
   ModelProviderListing,
   PullRequestDetail,
   PullRequestRef,
-  PullRequestSummary,
+  OpenPullRequest,
   RepositoryListing,
   RepositoryRef,
   Review,
@@ -33,7 +33,8 @@ function repositoryPath({ owner, repo }: RepositoryRef): string {
   return `/api/repositories/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
 }
 
-export function listOpenPullRequests(repository: RepositoryRef): Promise<PullRequestSummary[]> {
+/** The Repository's open Pull Requests, each with its latest Review, if it has any. */
+export function listOpenPullRequests(repository: RepositoryRef): Promise<OpenPullRequest[]> {
   return request(`${repositoryPath(repository)}/pull-requests`);
 }
 

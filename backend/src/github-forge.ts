@@ -14,6 +14,7 @@ interface GitHubPull {
   user: { login: string } | null;
   state: "open" | "closed";
   merged_at: string | null;
+  updated_at: string;
   head: { sha: string; ref: string };
   base: { ref: string; repo: GitHubRepository };
 }
@@ -123,8 +124,6 @@ export function githubForge(loadCredentials: () => GitHubAppCredentials | undefi
         ...summary(pull),
         // GitHub calls a merged Pull Request closed, and says when it was merged.
         state: pull.merged_at ? "merged" : pull.state,
-        baseBranch: pull.base.ref,
-        headBranch: pull.head.ref,
         description: pull.body ?? "",
         // GitHub sends no patch for binary files and diffs too large to show; the skip list reports those.
         files: files.map((file) => ({
@@ -161,6 +160,9 @@ function summary(pull: GitHubPull): PullRequestSummary {
     title: pull.title,
     author: pull.user?.login ?? "ghost",
     headCommit: pull.head.sha,
+    baseBranch: pull.base.ref,
+    headBranch: pull.head.ref,
+    updatedAt: pull.updated_at,
   };
 }
 

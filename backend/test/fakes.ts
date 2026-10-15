@@ -100,6 +100,7 @@ export function standInReviews(overrides: Partial<Reviews> = {}): Reviews {
     start: async () => ({ started: false, missing: "pull-request" }),
     get: () => undefined,
     list: async () => undefined,
+    latest: () => undefined,
     follow: () => undefined,
     ...overrides,
   };

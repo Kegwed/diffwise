@@ -1,21 +1,27 @@
-import { parsePatch, type PullRequestRef, type PullRequestSummary } from "@diffwise/shared";
+import { FIXTURE_REPOSITORY, parsePatch, type PullRequestRef, type PullRequestSummary } from "@diffwise/shared";
 import type { ChangedFile, Forge, PullRequestSnapshot } from "./forge.ts";
 
 /**
  * A Pull Request as the fixture Forge is given it. What GitHub would count of each file is worked out from its patch,
- * a file with no patch being binary, and the Pull Request is open into main unless it says otherwise.
+ * a file with no patch being binary, and the Pull Request is open into main, last updated at FIXTURE_UPDATED_AT,
+ * unless it says otherwise.
  */
 export interface FixturePullRequest
-  extends Omit<PullRequestSnapshot, "files" | "state" | "baseBranch" | "headBranch">,
-    Partial<Pick<PullRequestSnapshot, "state" | "baseBranch" | "headBranch">> {
+  extends Omit<PullRequestSnapshot, "files" | Defaulted>,
+    Partial<Pick<PullRequestSnapshot, Defaulted>> {
   files: Pick<ChangedFile, "path" | "patch">[];
 }
+
+/** What a fixture Pull Request may leave out, to be given the default. */
+type Defaulted = "state" | "baseBranch" | "headBranch" | "updatedAt";
+
+/** When a fixture Pull Request that doesn't say otherwise was last updated. */
+export const FIXTURE_UPDATED_AT = "2026-01-01T00:00:00Z";
 
 /** Pull Requests served without GitHub, so Diffwise can be tried before a GitHub App is set up. */
 export const FIXTURE_PULL_REQUESTS: FixturePullRequest[] = [
   {
-    owner: "diffwise-fixtures",
-    repo: "bookshop",
+    ...FIXTURE_REPOSITORY,
     number: 1,
     title: "Add customer search and order export",
     author: "fixture-author",
@@ -98,8 +104,15 @@ export function fixtureForge(fixtures: FixturePullRequest[] = FIXTURE_PULL_REQUE
   };
 }
 
-function snapshot({ state = "open", baseBranch = "main", headBranch = "fixture", files, ...pullRequest }: FixturePullRequest): PullRequestSnapshot {
-  return { ...pullRequest, state, baseBranch, headBranch, files: files.map(changedFile) };
+function snapshot({
+  state = "open",
+  baseBranch = "main",
+  headBranch = "fixture",
+  updatedAt = FIXTURE_UPDATED_AT,
+  files,
+  ...pullRequest
+}: FixturePullRequest): PullRequestSnapshot {
+  return { ...pullRequest, state, baseBranch, headBranch, updatedAt, files: files.map(changedFile) };
 }
 
 function changedFile({ path, patch }: Pick<ChangedFile, "path" | "patch">): ChangedFile {
@@ -113,8 +126,8 @@ function changedFile({ path, patch }: Pick<ChangedFile, "path" | "patch">): Chan
   };
 }
 
-function summary({ owner, repo, number, title, author, headCommit }: PullRequestSnapshot): PullRequestSummary {
-  return { owner, repo, number, title, author, headCommit };
+function summary({ owner, repo, number, title, author, headCommit, baseBranch, headBranch, updatedAt }: PullRequestSnapshot): PullRequestSummary {
+  return { owner, repo, number, title, author, headCommit, baseBranch, headBranch, updatedAt };
 }
 
 /** Serves the fixture Pull Requests alongside `forge`'s, so they can still be tried once GitHub is connected. */

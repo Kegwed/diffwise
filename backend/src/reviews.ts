@@ -1,4 +1,14 @@
-import { isOutdated, SEVERITIES, type FindingKind, type ModelChoice, type PullRequestRef, type Review, type ReviewEvent, type ReviewSummary } from "@diffwise/shared";
+import {
+  isOutdated,
+  SEVERITIES,
+  type FindingKind,
+  type ModelChoice,
+  type PullRequestRef,
+  type PullRequestSummary,
+  type Review,
+  type ReviewEvent,
+  type ReviewSummary,
+} from "@diffwise/shared";
 import { getReview, listReviews, saveReview, type Database, type ListedReview } from "./db.ts";
 import { ForgeAccessError, type Forge } from "./forge.ts";
 import { modelUnavailable, type ModelProvider, type ModelUnavailable } from "./model-provider.ts";
@@ -34,6 +44,11 @@ export interface Reviews {
    * they're listed without saying whether they're Outdated.
    */
   list(pullRequest: PullRequestRef): Promise<ReviewSummary[] | undefined>;
+  /**
+   * The Pull Request's newest Review, Outdated or not against the head commit `pullRequest` already has, so the Pull
+   * Request isn't read again; undefined if it has no Reviews.
+   */
+  latest(pullRequest: PullRequestSummary): ReviewSummary | undefined;
   /**
    * The Review's progress until it completes, turns out Unsaved, or `signal` aborts: first the Review as it stands, then
    * each change to it, ending with its completion or with it turning out Unsaved. Undefined if there's no such Review.
@@ -79,6 +94,11 @@ export function createReviews({ forge, modelProviders, db, modelCallTimeoutMs }:
       if (pullRequest === "unreadable") return reviewsOf(ref);
       // Outdated is worked out against the head commit as it is now, so it's never saved.
       return reviewsOf(pullRequest).map((review) => ({ ...review, outdated: isOutdated(review, pullRequest) }));
+    },
+
+    latest(pullRequest) {
+      const [newest] = reviewsOf(pullRequest);
+      return newest && { ...newest, outdated: isOutdated(newest, pullRequest) };
     },
 
     follow(id, signal) {

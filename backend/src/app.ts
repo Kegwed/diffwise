@@ -5,9 +5,9 @@ import type {
   ApiError,
   GitHubAppStatus,
   ModelProviderListing,
+  OpenPullRequest,
   PullRequestDetail,
   PullRequestRef,
-  PullRequestSummary,
   RepositoryListing,
   RepositoryRef,
   Review,
@@ -101,7 +101,14 @@ export function createApp({
 
   app.get("/api/repositories/:owner/:repo/pull-requests", async (c) => {
     const { owner, repo } = c.req.param();
-    return c.json<PullRequestSummary[]>(await forge.listOpenPullRequests({ owner, repo }));
+    const pullRequests = await forge.listOpenPullRequests({ owner, repo });
+    // Each latest Review is read from Diffwise's own Reviews, against the head commit just listed: no more asked of GitHub.
+    return c.json<OpenPullRequest[]>(
+      pullRequests.map((pullRequest) => {
+        const latestReview = reviews.latest(pullRequest);
+        return latestReview ? { ...pullRequest, latestReview } : pullRequest;
+      }),
+    );
   });
 
   app.get("/api/pull-requests/by-url", async (c) => {

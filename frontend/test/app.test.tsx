@@ -5,6 +5,7 @@ import type {
   Finding,
   GitHubAppStatus,
   ModelProviderListing,
+  OpenPullRequest,
   PullRequestDetail,
   PullRequestSummary,
   Review,
@@ -20,13 +21,15 @@ const pullRequest: PullRequestSummary = {
   title: "Add user lookup",
   author: "octocat",
   headCommit: "abc1234def",
+  baseBranch: "main",
+  headBranch: "user-lookup",
+  // Two hours before the tests run, so it's always "2 hours ago".
+  updatedAt: new Date(Date.now() - 2 * 60 * 60_000).toISOString(),
 };
 
 const pullRequestDetail: PullRequestDetail = {
   ...pullRequest,
   state: "open",
-  baseBranch: "main",
-  headBranch: "user-lookup",
   changedFiles: [
     { path: "src/users.ts", additions: 3, deletions: 0, binary: false },
     { path: "src/config.ts", additions: 2, deletions: 1, binary: false },
@@ -435,16 +438,37 @@ describe("browsing to a Pull Request", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(unlisted);
   });
 
-  test("selecting a Repository lists its open Pull Requests", async () => {
+  test("selecting a Repository lists its open Pull Requests, each with its branches, head commit and when it was updated", async () => {
     stubApi();
     render(<App />);
 
     await userEvent.click(await screen.findByRole("link", { name: "acme/shop" }));
 
-    expect(await screen.findByRole("heading", { name: /open pull requests in acme\/shop/i })).toBeInTheDocument();
-    const row = (await screen.findByRole("link", { name: "Add user lookup" })).closest("li")!;
-    expect(row).toHaveTextContent("#7 by octocat at abc1234");
+    expect(await screen.findByRole("heading", { name: "acme/shop" })).toBeInTheDocument();
+    const list = screen.getByRole("region", { name: "Open Pull Requests" });
+    expect(await within(list).findByText("1 open")).toBeInTheDocument();
+    const row = within(list).getByRole("link", { name: "Add user lookup" }).closest("li")!;
+    expect(within(row).getByRole("link", { name: "Add user lookup" })).toHaveAttribute("href", "#/acme/shop/pull/7");
+    expect(row).toHaveTextContent("#7 · opened by octocat · user-lookup into main");
+    expect(within(row).getByTitle("abc1234def")).toHaveTextContent("abc1234");
+    expect(within(row).getByRole("time")).toHaveTextContent("2 hours ago");
+    expect(within(row).getByRole("time")).toHaveAttribute("datetime", pullRequest.updatedAt);
+    expect(row).toHaveTextContent("No Reviews yet");
+    expect(list).toHaveTextContent(
+      "Closed Pull Requests aren't listed here. Paste a closed Pull Request's URL on the home page to open it.",
+    );
     expect(screen.queryByRole("link", { name: "acme/docs" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Built-in fixture")).not.toBeInTheDocument();
+  });
+
+  test("the built-in fixture Repository says what it's for", async () => {
+    stubApi(review, modelListing, { "/api/repositories/diffwise-fixtures/bookshop/pull-requests": () => Response.json([]) });
+    window.location.hash = "#/diffwise-fixtures/bookshop";
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "diffwise-fixtures/bookshop" })).toBeInTheDocument();
+    expect(screen.getByText("Built-in fixture")).toHaveClass("dw-badge");
+    expect(screen.getByText("Ships with Diffwise so you can try a Review without connecting GitHub.")).toBeInTheDocument();
   });
 
   test("a Repository with no open Pull Requests says so", async () => {
@@ -536,7 +560,7 @@ describe("browsing to a Pull Request", () => {
     expect(within(breadcrumb).getByText("#7")).toHaveAttribute("aria-current", "page");
 
     await userEvent.click(within(breadcrumb).getByRole("link", { name: "acme/shop" }));
-    expect(await screen.findByRole("heading", { name: /open pull requests in acme\/shop/i })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "acme/shop" })).toBeInTheDocument();
 
     await userEvent.click(within(screen.getByRole("navigation", { name: "Breadcrumb" })).getByRole("link", { name: "Repositories" }));
     expect(await screen.findByRole("link", { name: "acme/docs" })).toBeInTheDocument();
@@ -820,7 +844,7 @@ describe("live progress while a Review runs", () => {
 
     await userEvent.click(within(screen.getByRole("navigation", { name: "Breadcrumb" })).getByRole("link", { name: "acme/shop" }));
 
-    await screen.findByRole("heading", { name: /open pull requests in acme\/shop/i });
+    await screen.findByRole("heading", { name: "acme/shop" });
     expect(stream.readyState).toBe(FakeProgressStream.CLOSED);
   });
 
@@ -835,6 +859,73 @@ describe("live progress while a Review runs", () => {
     stream.fail();
 
     expect(await screen.findByRole("alert")).toHaveTextContent(error);
+  });
+});
+
+describe("an open Pull Request's latest Review", () => {
+  const latest: ReviewSummary = {
+    id: "review-1",
+    modelProvider: "Ollama",
+    model: "llama3.1:8b",
+    headCommit: "abc1234def",
+    createdAt: "2026-09-27T10:00:00.000Z",
+    status: "complete",
+    findingCounts: { "bad-practice": 1, "security-issue": 2 },
+    severityCounts: { low: 1, medium: 0, high: 2, critical: 0 },
+    outdated: false,
+  };
+
+  /** Opens acme/shop's page, listing its one open Pull Request with `latestReview`; resolves with its row. */
+  async function openRow(latestReview?: ReviewSummary) {
+    const listed: OpenPullRequest = latestReview ? { ...pullRequest, latestReview } : pullRequest;
+    stubApi(review, modelListing, { "/api/repositories/acme/shop/pull-requests": () => Response.json([listed]) });
+    window.location.hash = "#/acme/shop";
+    render(<App />);
+    return (await screen.findByRole("link", { name: "Add user lookup" })).closest("li")!;
+  }
+
+  /** The row's latest Review: its state's badge, and what the note beside it says. */
+  function latestReviewOf(row: HTMLElement) {
+    const state = row.querySelector(".dw-state")!;
+    return { state: state.textContent, className: state.className, note: state.parentElement!.textContent!.slice(state.textContent!.length) };
+  }
+
+  test("isn't there when the Pull Request has no Reviews", async () => {
+    const row = await openRow();
+
+    expect(row).toHaveTextContent("No Reviews yet");
+    expect(row.querySelector(".dw-state")).toBeNull();
+  });
+
+  test("when complete, says how many Findings of each Severity it reports, highest first", async () => {
+    const row = await openRow(latest);
+
+    expect(latestReviewOf(row)).toMatchObject({ state: "Complete", className: expect.stringContaining("dw-state-complete") });
+    expect([...row.querySelectorAll(".dw-sev")].map((chip) => chip.textContent)).toEqual(["2 High", "1 Low"]);
+  });
+
+  test("when complete without Findings, says so", async () => {
+    const row = await openRow({ ...latest, severityCounts: { low: 0, medium: 0, high: 0, critical: 0 } });
+
+    expect(latestReviewOf(row)).toMatchObject({ state: "Complete", note: "No Findings" });
+  });
+
+  test("while running, says how many of its files have settled", async () => {
+    const row = await openRow({ ...latest, status: "running", progress: { settled: 1, total: 3 } });
+
+    expect(latestReviewOf(row)).toMatchObject({ state: "Running", className: expect.stringContaining("dw-state-running"), note: "1 of 3 files" });
+  });
+
+  test("when Unsaved, says a restart loses it", async () => {
+    const row = await openRow({ ...latest, status: "unsaved" });
+
+    expect(latestReviewOf(row)).toMatchObject({ state: "Unsaved", note: "Lost if Diffwise restarts." });
+  });
+
+  test("when Outdated, names the Pull Request's head commit now", async () => {
+    const row = await openRow({ ...latest, headCommit: "0ld0ld0ld", outdated: true });
+
+    expect(latestReviewOf(row)).toMatchObject({ state: "Outdated", className: expect.stringContaining("dw-state-outdated"), note: "Head is now abc1234" });
   });
 });
 

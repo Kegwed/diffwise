@@ -1,9 +1,10 @@
 import { describe, expect, test } from "vitest";
-import type { ApiError, PullRequestDetail, PullRequestSummary, RepositoryListing } from "@diffwise/shared";
+import type { ApiError, OpenPullRequest, PullRequestDetail, RepositoryListing } from "@diffwise/shared";
 import { createApp } from "../src/app.ts";
-import { withFixtures, type FixturePullRequest } from "../src/fixture-forge.ts";
+import { FIXTURE_UPDATED_AT, withFixtures, type FixturePullRequest } from "../src/fixture-forge.ts";
 import type { Forge } from "../src/forge.ts";
-import { fakeForge, fakeModelProvider, standInReviews } from "./fakes.ts";
+import { fakeForge, fakeModelProvider, held, standInReviews } from "./fakes.ts";
+import { completedReview, followReview, setupReviews, sqlInjection, startReview, usersPatch } from "./reviewing.ts";
 
 const userLookup: FixturePullRequest = {
   owner: "acme",
@@ -12,6 +13,7 @@ const userLookup: FixturePullRequest = {
   title: "Add user lookup",
   author: "octocat",
   headCommit: "abc1234",
+  updatedAt: "2026-10-01T09:30:00Z",
   state: "open",
   baseBranch: "develop",
   headBranch: "user-lookup",
@@ -67,13 +69,33 @@ describe("Browsing Repositories", () => {
     });
   });
 
-  test("lists a Repository's open Pull Requests, and no other Repository's", async () => {
+  test("lists a Repository's open Pull Requests with their branches and when they were last updated, and no other Repository's", async () => {
     const response = await setup().request("/api/repositories/acme/shop/pull-requests");
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual<PullRequestSummary[]>([
-      { owner: "acme", repo: "shop", number: 7, title: "Add user lookup", author: "octocat", headCommit: "abc1234" },
-      { owner: "acme", repo: "shop", number: 9, title: "Speed up checkout", author: "hubot", headCommit: "def5678" },
+    expect(await response.json()).toEqual<OpenPullRequest[]>([
+      {
+        owner: "acme",
+        repo: "shop",
+        number: 7,
+        title: "Add user lookup",
+        author: "octocat",
+        headCommit: "abc1234",
+        baseBranch: "develop",
+        headBranch: "user-lookup",
+        updatedAt: "2026-10-01T09:30:00Z",
+      },
+      {
+        owner: "acme",
+        repo: "shop",
+        number: 9,
+        title: "Speed up checkout",
+        author: "hubot",
+        headCommit: "def5678",
+        baseBranch: "main",
+        headBranch: "fixture",
+        updatedAt: FIXTURE_UPDATED_AT,
+      },
     ]);
   });
 
@@ -99,6 +121,7 @@ describe("A Pull Request's detail", () => {
       title: "Add user lookup",
       author: "octocat",
       headCommit: "abc1234",
+      updatedAt: "2026-10-01T09:30:00Z",
       state: "open",
       baseBranch: "develop",
       headBranch: "user-lookup",
@@ -124,7 +147,7 @@ describe("A Pull Request's detail", () => {
     });
 
     const detail = (await (await app.request("/api/repositories/acme/shop/pull-requests/9")).json()) as PullRequestDetail;
-    const open = (await (await app.request("/api/repositories/acme/shop/pull-requests")).json()) as PullRequestSummary[];
+    const open = (await (await app.request("/api/repositories/acme/shop/pull-requests")).json()) as OpenPullRequest[];
 
     expect(detail.state).toBe("merged");
     expect(open.map((pr) => pr.number)).toEqual([7]);
@@ -172,8 +195,8 @@ describe("Browsing with the fixture Pull Requests alongside GitHub's", () => {
   test("each Repository lists its own open Pull Requests, fixture or not", async () => {
     const app = setupWithFixtures(fakeForge([userLookup, checkout]));
 
-    const fixture = (await (await app.request("/api/repositories/acme/docs/pull-requests")).json()) as PullRequestSummary[];
-    const installed = (await (await app.request("/api/repositories/acme/shop/pull-requests")).json()) as PullRequestSummary[];
+    const fixture = (await (await app.request("/api/repositories/acme/docs/pull-requests")).json()) as OpenPullRequest[];
+    const installed = (await (await app.request("/api/repositories/acme/shop/pull-requests")).json()) as OpenPullRequest[];
 
     expect(fixture.map((pr) => pr.title)).toEqual(["Fix a typo"]);
     expect(installed.map((pr) => pr.title)).toEqual(["Add user lookup", "Speed up checkout"]);
@@ -194,5 +217,89 @@ describe("Browsing with the fixture Pull Requests alongside GitHub's", () => {
       repositories: [{ owner: "acme", repo: "docs" }],
       unlisted: "GitHub replied 401 when listing the GitHub App's installations: Bad credentials",
     });
+  });
+});
+
+describe("Each open Pull Request's latest Review", () => {
+  const lookup: FixturePullRequest = { ...userLookup, files: [{ path: "src/users.ts", patch: usersPatch }] };
+
+  /** The fake Forge, recording the name of each method called on it, so a test can say what the listing asked it. */
+  function countingForge(pullRequests: FixturePullRequest[]) {
+    const calls: string[] = [];
+    const forge = fakeForge(pullRequests);
+    const counted = Object.fromEntries(
+      Object.entries(forge).map(([method, call]: [string, (...args: never[]) => unknown]) => [
+        method,
+        (...args: never[]) => {
+          calls.push(method);
+          return call(...args);
+        },
+      ]),
+    ) as unknown as Forge;
+    return { forge: counted, calls };
+  }
+
+  function setupListing(pullRequests: FixturePullRequest[], modelResponses: unknown[]) {
+    const { forge, calls } = countingForge(pullRequests);
+    const { reviews } = setupReviews(modelResponses, { forge });
+    const app = createApp({ forge, modelProviders: [], reviews });
+    async function listOpen(): Promise<OpenPullRequest[]> {
+      const response = await app.request("/api/repositories/acme/shop/pull-requests");
+      expect(response.status).toBe(200);
+      return (await response.json()) as OpenPullRequest[];
+    }
+    return { reviews, calls, listOpen };
+  }
+
+  test("is its newest Review, with its Finding counts; a Pull Request with no Reviews has none", async () => {
+    const { reviews, listOpen } = setupListing([lookup, checkout], [{ findings: [] }, { findings: [sqlInjection] }]);
+    await completedReview(reviews, lookup);
+    const newest = await completedReview(reviews, lookup);
+
+    const [reviewed, unreviewed] = await listOpen();
+
+    expect(reviewed!.latestReview).toEqual({
+      id: newest.id,
+      modelProvider: "Ollama",
+      model: "test-model",
+      headCommit: "abc1234",
+      createdAt: newest.createdAt,
+      status: "complete",
+      findingCounts: { "bad-practice": 0, "security-issue": 1 },
+      severityCounts: { low: 0, medium: 0, high: 0, critical: 1 },
+      outdated: false,
+    });
+    expect(unreviewed).not.toHaveProperty("latestReview");
+  });
+
+  test("is Outdated once new commits are pushed to its Pull Request", async () => {
+    const pullRequests = [lookup];
+    const { reviews, listOpen } = setupListing(pullRequests, [{ findings: [] }]);
+    await completedReview(reviews, lookup);
+
+    pullRequests[0] = { ...lookup, headCommit: "fed4321" };
+
+    expect((await listOpen())[0]!.latestReview).toMatchObject({ headCommit: "abc1234", outdated: true });
+  });
+
+  test("says how many of its files have settled while it's running", async () => {
+    const answer = held({ findings: [] });
+    const { reviews, listOpen } = setupListing([lookup], [answer]);
+    const { id } = await startReview(reviews, lookup);
+
+    expect((await listOpen())[0]!.latestReview).toMatchObject({ id, status: "running", progress: { settled: 0, total: 1 }, outdated: false });
+
+    answer.release();
+    await followReview(reviews, id).rest();
+  });
+
+  test("is listed without asking the Forge for more than the open Pull Requests", async () => {
+    const { reviews, calls, listOpen } = setupListing([lookup, checkout], [{ findings: [] }]);
+    await completedReview(reviews, lookup);
+    calls.length = 0;
+
+    await listOpen();
+
+    expect(calls).toEqual(["listOpenPullRequests"]);
   });
 });

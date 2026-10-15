@@ -1,5 +1,5 @@
 import { SEVERITIES, type PullRequestRef, type ReviewSummary } from "@diffwise/shared";
-import { Notice, ReviewState, Severity } from "./design-system/index.ts";
+import { Notice, ReviewState, Severity, type ReviewStateProps } from "./design-system/index.ts";
 import { HeadCommit } from "./HeadCommit.tsx";
 import { reviewHref } from "./route.ts";
 
@@ -61,7 +61,7 @@ export function ReviewList({
                 </div>
                 <SeverityCounts counts={review.severityCounts} />
                 <div className="review-row-state">
-                  <ReviewState state={review.outdated && review.status === "complete" ? "outdated" : review.status} />
+                  <ReviewState state={reviewState(review)} />
                   <ReviewNote review={review} headCommit={headCommit} />
                 </div>
               </li>
@@ -73,8 +73,13 @@ export function ReviewList({
   );
 }
 
+/** The state a Review's badge shows: a complete Review that's Outdated shows that instead. */
+export function reviewState(review: ReviewSummary): ReviewStateProps["state"] {
+  return review.outdated && review.status === "complete" ? "outdated" : review.status;
+}
+
 /** How many Findings of each Severity a Review reports, highest first, leaving out the Severities it has none of. */
-function SeverityCounts({ counts }: { counts: ReviewSummary["severityCounts"] }) {
+export function SeverityCounts({ counts }: { counts: ReviewSummary["severityCounts"] }) {
   const reported = SEVERITIES_BY_PRIORITY.filter((severity) => counts[severity] > 0);
   return (
     <div className="review-row-findings">
