@@ -101,6 +101,7 @@ export function standInReviews(overrides: Partial<Reviews> = {}): Reviews {
     get: () => undefined,
     list: async () => undefined,
     latest: () => undefined,
+    recent: () => [],
     follow: () => undefined,
     ...overrides,
   };

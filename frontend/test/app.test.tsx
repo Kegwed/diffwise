@@ -8,6 +8,7 @@ import type {
   OpenPullRequest,
   PullRequestDetail,
   PullRequestSummary,
+  RecentReview,
   Review,
   ReviewEvent,
   ReviewSummary,
@@ -203,6 +204,7 @@ function stubApi(
     if (url === "/api/repositories/acme/shop/pull-requests/7/reviews") return Response.json([]);
     if (url === "/api/models") return Response.json(models);
     if (url === "/api/reviews" && init?.method === "POST") return Response.json(startedReview, { status: 201 });
+    if (url === "/api/reviews") return Response.json([]);
     return Response.json({ error: "not found" }, { status: 404 });
   });
   vi.stubGlobal("fetch", fetch);
@@ -223,6 +225,11 @@ async function startReview() {
   const button = screen.getByRole("button", { name: "Review" });
   await waitFor(() => expect(button).toBeEnabled());
   await userEvent.click(button);
+}
+
+/** The Severity chips in a row of Reviews, as their text reads ("2 Critical"). */
+function severityChips(row: HTMLElement) {
+  return [...row.querySelectorAll(".dw-sev")].map((chip) => chip.textContent);
 }
 
 /** The page of the Review that's open. */
@@ -969,10 +976,6 @@ describe("a Pull Request's Reviews", () => {
   }
 
   /** The Severity chips of a row, as they read. */
-  function severityChips(row: HTMLElement) {
-    return [...row.querySelectorAll(".dw-sev")].map((chip) => chip.textContent);
-  }
-
   test("the detail view lists the Pull Request's Reviews with their date, Model, commit, Findings by Severity and state", async () => {
     stubApi(review, modelListing, { [REVIEWS]: () => Response.json([gpt, llama]) });
     await openPullRequest();
@@ -1698,11 +1701,12 @@ describe("connecting to GitHub", () => {
     expect(screen.queryByRole("link", { name: /install/i })).not.toBeInTheDocument();
   });
 
-  test("once the GitHub App is created, the page says how to install it on Repositories", async () => {
+  test("once the GitHub App is created, the Repositories offer to install it on more", async () => {
     stubApi();
     render(<App />);
 
-    const link = await screen.findByRole("link", { name: /install diffwise-a1b2c3/i });
+    const repositories = await screen.findByRole("region", { name: "Repositories" });
+    const link = await within(repositories).findByRole("link", { name: "Install on more Repositories" });
     expect(link).toHaveAttribute("href", "https://github.com/apps/diffwise-a1b2c3/installations/new");
     expect(screen.queryByRole("button", { name: "Create GitHub App" })).not.toBeInTheDocument();
   });
@@ -1716,7 +1720,7 @@ describe("opening a Pull Request by URL", () => {
     const fetch = stubApi(review, modelListing, { [byUrl(url)]: () => Response.json(pullRequestDetail) });
     render(<App />);
 
-    await userEvent.type(await screen.findByRole("textbox", { name: "Pull Request URL" }), url);
+    await userEvent.type(await screen.findByRole("textbox", { name: "Paste a Pull Request URL" }), url);
     await userEvent.click(screen.getByRole("button", { name: "Open" }));
 
     const detail = await screen.findByRole("region", { name: "Add user lookup" });
@@ -1727,19 +1731,185 @@ describe("opening a Pull Request by URL", () => {
     expect(fetch).not.toHaveBeenCalledWith("/api/reviews", expect.anything());
   });
 
-  test.each([
-    ["isn't a GitHub Pull Request URL", 400, `"nope" isn't a GitHub Pull Request URL. Paste one like https://github.com/owner/repo/pull/123`],
-    ["is in a Repository the GitHub App isn't installed on", 403, "The GitHub App diffwise-a1b2c3 isn't installed on acme/shop. Install it there, then try again."],
-  ])("pasting something that %s shows the error, and stays on the Repositories", async (_, status, error) => {
-    const pasted = status === 400 ? "nope" : url;
-    stubApi(review, modelListing, { [byUrl(pasted)]: () => Response.json({ error }, { status }) });
+  /** Pastes `pasted` and opens it, then waits for the error it's shown under the field. */
+  async function pasteAndFail(pasted: string) {
+    const field = await screen.findByRole("textbox", { name: "Paste a Pull Request URL" });
+    await userEvent.type(field, pasted);
+    await userEvent.click(screen.getByRole("button", { name: "Open" }));
+    const error = await screen.findByRole("alert");
+    return { field, error };
+  }
+
+  test("pasting something that isn't a GitHub Pull Request URL shows why under the field, and stays on Home", async () => {
+    const error = `"nope" isn't a GitHub Pull Request URL. Paste one like https://github.com/owner/repo/pull/123`;
+    stubApi(review, modelListing, { [byUrl("nope")]: () => Response.json({ error }, { status: 400 }) });
     render(<App />);
 
-    await userEvent.type(await screen.findByRole("textbox", { name: "Pull Request URL" }), pasted);
-    await userEvent.click(screen.getByRole("button", { name: "Open" }));
+    const { field, error: shown } = await pasteAndFail("nope");
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(error);
+    expect(shown).toHaveTextContent(error);
+    expect(field).toHaveAttribute("aria-invalid", "true");
+    expect(field).toHaveAccessibleDescription(error);
+    expect(within(shown).queryByRole("link")).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "acme/shop" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Review" })).not.toBeInTheDocument();
+  });
+
+  test("pasting a URL in a Repository the GitHub App isn't installed on says so under the field, with where to install it", async () => {
+    const error = "The GitHub App diffwise-a1b2c3 isn't installed on acme/shop. Install it there, then try again.";
+    stubApi(review, modelListing, { [byUrl(url)]: () => Response.json({ error }, { status: 403 }) });
+    render(<App />);
+
+    const { field, error: shown } = await pasteAndFail(url);
+
+    expect(shown).toHaveTextContent(error);
+    expect(field).toHaveAttribute("aria-invalid", "true");
+    expect(within(shown).getByRole("link", { name: "Install on more Repositories" })).toHaveAttribute(
+      "href",
+      createdGitHubApp.installUrl,
+    );
+  });
+
+  test("editing the URL after an error stops marking the field invalid", async () => {
+    stubApi(review, modelListing, { [byUrl("nope")]: () => Response.json({ error: "Not a URL" }, { status: 400 }) });
+    render(<App />);
+    const { field } = await pasteAndFail("nope");
+
+    await userEvent.type(field, "!");
+
+    expect(field).toHaveAttribute("aria-invalid", "false");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+});
+
+describe("Home's Repositories", () => {
+  test("each links to its page, the built-in fixture says it works without GitHub, and none has counts", async () => {
+    stubApi(review, modelListing, {
+      "/api/repositories": () =>
+        Response.json({ repositories: [{ owner: "diffwise-fixtures", repo: "bookshop" }, { owner: "acme", repo: "shop" }] }),
+    });
+    render(<App />);
+
+    const repositories = await screen.findByRole("region", { name: "Repositories" });
+    const rows = await within(repositories).findAllByRole("listitem");
+    expect(rows.map((row) => row.textContent)).toEqual([
+      "diffwise-fixtures/bookshopBuilt-in fixture. Works without GitHub.",
+      "acme/shop",
+    ]);
+    expect(within(rows[1]!).getByRole("link")).toHaveAttribute("href", "#/acme/shop");
+    expect(within(rows[0]!).getByRole("link")).toHaveAttribute("href", "#/diffwise-fixtures/bookshop");
+    expect(within(repositories).getByText("2 listed")).toBeInTheDocument();
+  });
+
+  test("with no GitHub App created, there's nowhere to install it yet", async () => {
+    stubApi(review, modelListing, { "/api/github-app": () => Response.json({ status: "not-created" }) });
+    render(<App />);
+
+    const repositories = await screen.findByRole("region", { name: "Repositories" });
+    await within(repositories).findByRole("link", { name: "acme/shop" });
+    expect(within(repositories).queryByRole("link", { name: "Install on more Repositories" })).not.toBeInTheDocument();
+  });
+});
+
+describe("Home's recent Reviews", () => {
+  const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+  const noSeverities = { low: 0, medium: 0, high: 0, critical: 0 };
+  const recentReview: RecentReview = {
+    id: "complete-1",
+    pullRequest: { owner: "acme", repo: "shop", number: 7 },
+    pullRequestTitle: "Add user lookup",
+    modelProvider: "Ollama",
+    model: "llama3.1:8b",
+    headCommit: "abc1234def",
+    createdAt: minutesAgo(120),
+    status: "complete",
+    findingCounts: { "bad-practice": 1, "security-issue": 2 },
+    severityCounts: { ...noSeverities, critical: 2, low: 1 },
+  };
+
+  async function recentReviewRows(recent: RecentReview[]) {
+    stubApi(review, modelListing, { "/api/reviews": () => Response.json(recent) });
+    render(<App />);
+    const list = await screen.findByRole("region", { name: "Recent Reviews" });
+    return within(list).findAllByRole("listitem");
+  }
+
+  test("each leads to its Review, naming its Pull Request, when it started, its Model, commit and Findings by Severity", async () => {
+    const [row] = await recentReviewRows([recentReview]);
+
+    expect(within(row!).getByRole("link", { name: "Add user lookup" })).toHaveAttribute("href", "#/acme/shop/pull/7/reviews/complete-1");
+    expect(row).toHaveTextContent("acme/shop #7 · Started 2 hours ago");
+    expect(within(row!).getByRole("time")).toHaveAttribute("datetime", recentReview.createdAt);
+    expect(row).toHaveTextContent("llama3.1:8bOllama");
+    expect(within(row!).getByTitle("abc1234def")).toHaveTextContent("abc1234");
+    expect(severityChips(row!)).toEqual(["2 Critical", "1 Low"]);
+    expect(within(row!).getByText("Complete")).toHaveClass("dw-state-complete");
+  });
+
+  test("a Review saved before Pull Request titles were kept is named by its number", async () => {
+    const { pullRequestTitle, ...untitled } = recentReview;
+    const [row] = await recentReviewRows([untitled]);
+
+    expect(within(row!).getByRole("link", { name: "#7" })).toHaveAttribute("href", "#/acme/shop/pull/7/reviews/complete-1");
+  });
+
+  test("a complete Review without Findings says so", async () => {
+    const [row] = await recentReviewRows([{ ...recentReview, findingCounts: { "bad-practice": 0, "security-issue": 0 }, severityCounts: noSeverities }]);
+
+    expect(row).toHaveTextContent("No Findings");
+  });
+
+  test("a running Review shows how many of its files are done, as a bar too, and that a restart loses it", async () => {
+    const [row] = await recentReviewRows([
+      {
+        ...recentReview,
+        status: "running",
+        createdAt: minutesAgo(2),
+        findingCounts: { "bad-practice": 0, "security-issue": 0 },
+        severityCounts: noSeverities,
+        progress: { settled: 1, total: 3 },
+      },
+    ]);
+
+    expect(within(row!).getByText("Running")).toHaveClass("dw-state-running");
+    const bar = within(row!).getByRole("progressbar", { name: "Review progress" });
+    expect(bar).toHaveAttribute("aria-valuenow", "1");
+    expect(bar).toHaveAttribute("aria-valuemax", "3");
+    expect(row).toHaveTextContent("1 of 3 files. Lost if Diffwise restarts.");
+    expect(row).toHaveTextContent("Started 2 minutes ago");
+    expect(row).not.toHaveTextContent("No Findings");
+  });
+
+  test("an Unsaved Review says a restart loses it", async () => {
+    const [row] = await recentReviewRows([{ ...recentReview, status: "unsaved" }]);
+
+    expect(within(row!).getByText("Unsaved")).toHaveClass("dw-state-unsaved");
+    expect(row).toHaveTextContent("Lost if Diffwise restarts");
+    expect(within(row!).queryByRole("progressbar")).not.toBeInTheDocument();
+  });
+
+  test("are listed in the order given, newest first", async () => {
+    const rows = await recentReviewRows([
+      { ...recentReview, id: "newer", pullRequestTitle: "Newer" },
+      { ...recentReview, id: "older", pullRequestTitle: "Older" },
+    ]);
+
+    expect(rows.map((row) => within(row).getAllByRole("link")[0]!.textContent)).toEqual(["Newer", "Older"]);
+  });
+
+  test("with no Reviews yet, says so", async () => {
+    stubApi();
+    render(<App />);
+
+    const list = await screen.findByRole("region", { name: "Recent Reviews" });
+    expect(await within(list).findByText(/No Reviews yet/)).toBeInTheDocument();
+  });
+
+  test("that can't be listed say why", async () => {
+    stubApi(review, modelListing, { "/api/reviews": () => Response.json({ error: "database is locked" }, { status: 500 }) });
+    render(<App />);
+
+    const list = await screen.findByRole("region", { name: "Recent Reviews" });
+    expect(await within(list).findByRole("alert")).toHaveTextContent("database is locked");
   });
 });

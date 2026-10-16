@@ -33,6 +33,15 @@ describe("Reviews", () => {
     });
   });
 
+  test("a Review keeps its Pull Request's title, running and once saved", async () => {
+    const { reviews, restart } = setupReviews([{ findings: [] }]);
+
+    const { id, pullRequestTitle } = await completedReview(reviews, pullRequest);
+
+    expect(pullRequestTitle).toBe("Add user lookup");
+    expect(restart().get(id)?.pullRequestTitle).toBe("Add user lookup");
+  });
+
   test("a fetched Review carries each reviewed file's patch, so it can be shown as a diff", async () => {
     const { reviews } = setupReviews([{ findings: [sqlInjection] }]);
 
@@ -389,6 +398,33 @@ describe("Reviews saved by an earlier version", () => {
       db.close();
 
       expect(review?.fileOutcomes).toEqual([{ file: "src/users.ts", outcome: "reviewed", patch: "" }]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a Review saved before Pull Request titles were kept still loads and is listed, without a title", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "diffwise-"));
+    try {
+      const path = join(dir, "diffwise.db");
+      const old = new DatabaseSync(path);
+      old.exec(`
+        CREATE TABLE reviews (id TEXT PRIMARY KEY, owner TEXT NOT NULL, repo TEXT NOT NULL, number INTEGER NOT NULL,
+          head_commit TEXT NOT NULL, model_provider TEXT NOT NULL, model TEXT NOT NULL, created_at TEXT NOT NULL);
+        INSERT INTO reviews VALUES ('old', 'acme', 'shop', 7, 'abc1234', 'Ollama', 'test-model', '2026-09-01T00:00:00.000Z');
+      `);
+      old.close();
+      const db = openDatabase(path);
+      const { reviews } = setupReviews([], { db });
+
+      const review = reviews.get("old");
+      const recent = reviews.recent();
+      db.close();
+
+      expect(review).toMatchObject({ id: "old", pullRequest: { owner: "acme", repo: "shop", number: 7 } });
+      expect(review).not.toHaveProperty("pullRequestTitle");
+      expect(recent).toMatchObject([{ id: "old", pullRequest: { owner: "acme", repo: "shop", number: 7 } }]);
+      expect(recent[0]).not.toHaveProperty("pullRequestTitle");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -3,12 +3,12 @@ import type { PullRequestRef, RepositoryRef } from "@diffwise/shared";
 
 /** The view the page's URL fragment asks for. A Pull Request's path mirrors its path on GitHub. */
 export type Route =
-  | { view: "repositories" }
+  | { view: "home" }
   | { view: "repository"; repository: RepositoryRef }
   /** `reviewId` names the Review of the Pull Request to show, so a Review can be left and reopened. */
   | { view: "pull-request"; pullRequest: PullRequestRef; reviewId?: string };
 
-export const REPOSITORIES_HREF = "#/";
+export const HOME_HREF = "#/";
 
 export function repositoryHref({ owner, repo }: RepositoryRef): string {
   return `#/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
@@ -27,17 +27,17 @@ export function githubHref({ owner, repo, number }: PullRequestRef): string {
   return `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pull/${number}`;
 }
 
-/** Anything that isn't a Repository's or a Pull Request's fragment is the first view, the Repositories. */
+/** Anything that isn't a Repository's or a Pull Request's fragment is the first view, Home. */
 export function parseRoute(hash: string): Route {
   const match = /^#\/([^/]+)\/([^/]+)(?:\/pull\/([1-9]\d*)(?:\/reviews\/([^/]+))?)?\/?$/.exec(hash);
-  if (!match) return { view: "repositories" };
+  if (!match) return { view: "home" };
   let repository: RepositoryRef;
   let reviewId: string | undefined;
   try {
     repository = { owner: decodeURIComponent(match[1]!), repo: decodeURIComponent(match[2]!) };
     reviewId = match[4] === undefined ? undefined : decodeURIComponent(match[4]);
   } catch {
-    return { view: "repositories" };
+    return { view: "home" };
   }
   return match[3] === undefined
     ? { view: "repository", repository }

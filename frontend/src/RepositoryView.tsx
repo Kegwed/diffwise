@@ -5,7 +5,7 @@ import { Badge, ReviewState } from "./design-system/index.ts";
 import { HeadCommit } from "./HeadCommit.tsx";
 import { relativeTime } from "./relativeTime.ts";
 import { reviewState, SeverityCounts } from "./ReviewList.tsx";
-import { pullRequestHref, REPOSITORIES_HREF } from "./route.ts";
+import { pullRequestHref, HOME_HREF } from "./route.ts";
 import { useLoaded } from "./useLoaded.ts";
 
 /** A Repository's open Pull Requests, each with its latest Review and leading to its detail view. */
@@ -16,7 +16,7 @@ export function RepositoryView({ repository }: { repository: RepositoryRef }) {
 
   return (
     <section aria-labelledby="repository" className="page">
-      <Breadcrumb above={[{ label: "Repositories", href: REPOSITORIES_HREF }]} current={name} />
+      <Breadcrumb above={[{ label: "Repositories", href: HOME_HREF }]} current={name} />
       <div className="repository-head">
         <div className="repository-title">
           <h2 id="repository">{name}</h2>

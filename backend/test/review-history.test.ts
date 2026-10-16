@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
-import type { ReviewSummary } from "@diffwise/shared";
+import type { RecentReview, ReviewSummary } from "@diffwise/shared";
+import { saveReview } from "../src/db.ts";
 import { ForgeAccessError, type Forge } from "../src/forge.ts";
 import { fixtureForge, type FixturePullRequest } from "../src/fixture-forge.ts";
 import type { ModelProvider } from "../src/model-provider.ts";
@@ -217,5 +218,83 @@ describe("A Pull Request's Reviews", () => {
     const { reviews } = setupReviews([], { forge: fakeForge([pullRequest], { notInstalledOn: ["acme/shop"] }) });
 
     await expect(reviews.list(pullRequest)).rejects.toThrow(ForgeAccessError);
+  });
+});
+
+describe("Recent Reviews", () => {
+  test("are listed across all Repositories, newest first, each with its Pull Request and that Pull Request's title", async () => {
+    const otherRepository = { ...pullRequest, owner: "acme", repo: "billing", number: 3, title: "Refactor invoice export" };
+    const { reviews } = setup([fakeModelProvider([{ findings: [sqlInjection] }, { findings: [] }]).provider], [otherRepository]);
+    const older = await completedReview(reviews, pullRequest);
+    const newer = await completedReview(reviews, otherRepository);
+
+    expect(reviews.recent()).toEqual<RecentReview[]>([
+      {
+        id: newer.id,
+        pullRequest: { owner: "acme", repo: "billing", number: 3 },
+        pullRequestTitle: "Refactor invoice export",
+        modelProvider: "Ollama",
+        model: "test-model",
+        headCommit: "abc1234",
+        createdAt: newer.createdAt,
+        status: "complete",
+        findingCounts: { "bad-practice": 0, "security-issue": 0 },
+        severityCounts: { low: 0, medium: 0, high: 0, critical: 0 },
+      },
+      {
+        id: older.id,
+        pullRequest: { owner: "acme", repo: "shop", number: 7 },
+        pullRequestTitle: "Add user lookup",
+        modelProvider: "Ollama",
+        model: "test-model",
+        headCommit: "abc1234",
+        createdAt: older.createdAt,
+        status: "complete",
+        findingCounts: { "bad-practice": 0, "security-issue": 1 },
+        severityCounts: { low: 0, medium: 0, high: 0, critical: 1 },
+      },
+    ]);
+  });
+
+  test("include running Reviews, with how many of their files have settled, and never say whether any is Outdated", async () => {
+    const second = held({ findings: [] });
+    const { reviews, push } = setup([fakeModelProvider([{ findings: [] }, second]).provider]);
+    const saved = await completedReview(reviews, pullRequest);
+    const running = await startReview(reviews, pullRequest);
+    push("def5678");
+
+    const recent = reviews.recent();
+
+    expect(recent).toMatchObject([
+      { id: running.id, status: "running", pullRequestTitle: "Add user lookup", progress: { settled: 0, total: 1 } },
+      { id: saved.id, status: "complete" },
+    ]);
+    expect(recent[1]).not.toHaveProperty("progress");
+    expect(recent.some((review) => "outdated" in review)).toBe(false);
+
+    second.release();
+    await followReview(reviews, running.id).rest();
+  });
+
+  test("are the 20 newest", async () => {
+    const { reviews, db } = setupReviews([]);
+    const saved = Array.from({ length: 21 }, (_, i) => ({
+      id: `r${i}`,
+      pullRequest: { owner: "acme", repo: "shop", number: 7 },
+      pullRequestTitle: "Add user lookup",
+      headCommit: "abc1234",
+      modelProvider: "Ollama",
+      model: "test-model",
+      createdAt: new Date(Date.UTC(2026, 9, 1, 0, i)).toISOString(),
+      status: "complete" as const,
+      fileOutcomes: [],
+      pendingFiles: [],
+      findings: [],
+    }));
+    for (const review of saved) saveReview(db, review);
+
+    const recent = reviews.recent();
+
+    expect(recent.map(({ id }) => id)).toEqual(saved.map(({ id }) => id).reverse().slice(0, 20));
   });
 });

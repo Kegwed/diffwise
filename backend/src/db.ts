@@ -1,4 +1,4 @@
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { OLLAMA } from "./model-provider-config.ts";
 import type { FileOutcome, Finding, FindingKind, PullRequestRef, Review, Severity } from "@diffwise/shared";
 
@@ -47,6 +47,8 @@ export function openDatabase(path: string): Database {
   addColumnIfMissing(db, "reviews", "model_provider", `TEXT NOT NULL DEFAULT '${OLLAMA}'`);
   // Reviews saved before patches were kept show their Findings without a diff.
   addColumnIfMissing(db, "file_outcomes", "patch", "TEXT");
+  // Reviews saved before Pull Request titles were kept are shown by the Pull Request's number instead.
+  addColumnIfMissing(db, "reviews", "pull_request_title", "TEXT");
   return db;
 }
 
@@ -58,7 +60,8 @@ function addColumnIfMissing(db: Database, table: string, column: string, definit
 /** Saves a complete Review. */
 export function saveReview(db: Database, review: Review): void {
   const insertReview = db.prepare(
-    "INSERT INTO reviews (id, owner, repo, number, head_commit, model_provider, model, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    `INSERT INTO reviews (id, owner, repo, number, pull_request_title, head_commit, model_provider, model, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   const insertFinding = db.prepare(
     `INSERT INTO findings (review_id, position, kind, severity, file, start_line, end_line, title, explanation, suggested_fix, security_reference)
@@ -70,7 +73,17 @@ export function saveReview(db: Database, review: Review): void {
   const { owner, repo, number } = review.pullRequest;
   db.exec("BEGIN");
   try {
-    insertReview.run(review.id, owner, repo, number, review.headCommit, review.modelProvider, review.model, review.createdAt);
+    insertReview.run(
+      review.id,
+      owner,
+      repo,
+      number,
+      review.pullRequestTitle ?? null,
+      review.headCommit,
+      review.modelProvider,
+      review.model,
+      review.createdAt,
+    );
     review.fileOutcomes.forEach((o, position) => {
       const [reason, patch] = o.outcome === "reviewed" ? [null, o.patch] : [o.reason, null];
       insertFileOutcome.run(review.id, position, o.file, o.outcome, reason, patch);
@@ -102,6 +115,7 @@ interface ReviewRow {
   owner: string;
   repo: string;
   number: number;
+  pull_request_title: string | null;
   head_commit: string;
   model_provider: string;
   model: string;
@@ -138,7 +152,7 @@ export function getReview(db: Database, id: string): Review | undefined {
     .all(id) as unknown as FindingRow[];
   return {
     id: row.id,
-    pullRequest: { owner: row.owner, repo: row.repo, number: row.number },
+    ...pullRequestOf(row),
     headCommit: row.head_commit,
     modelProvider: row.model_provider,
     model: row.model,
@@ -151,25 +165,39 @@ export function getReview(db: Database, id: string): Review | undefined {
   };
 }
 
-/** A Review as a list of Reviews needs it: no File Outcomes, and only the kind of each Finding. */
-export type ListedReview = Pick<Review, "id" | "modelProvider" | "model" | "headCommit" | "createdAt" | "status"> & {
+/** A Review as a list of Reviews needs it: no File Outcomes, and only the kind and Severity of each Finding. */
+export type ListedReview = Pick<
+  Review,
+  "id" | "pullRequest" | "pullRequestTitle" | "modelProvider" | "model" | "headCommit" | "createdAt" | "status"
+> & {
   findings: Pick<Finding, "kind" | "severity">[];
 };
 
 /** The Pull Request's saved Reviews, newest first. Whether each is Outdated isn't saved, so it's left to the caller. */
 export function listReviews(db: Database, { owner, repo, number }: PullRequestRef): ListedReview[] {
+  return listSaved(db, "WHERE owner = ? AND repo = ? AND number = ?", [owner, repo, number]);
+}
+
+/** The newest `limit` saved Reviews, of any Pull Request, newest first. */
+export function listRecentReviews(db: Database, limit: number): ListedReview[] {
+  return listSaved(db, "", [], limit);
+}
+
+/** The saved Reviews `where` picks, newest first, at most `limit` of them. */
+function listSaved(db: Database, where: string, params: SQLInputValue[], limit = -1): ListedReview[] {
   const rows = db
-    .prepare("SELECT * FROM reviews WHERE owner = ? AND repo = ? AND number = ? ORDER BY created_at DESC, rowid DESC")
-    .all(owner, repo, number) as unknown as ReviewRow[];
+    .prepare(`SELECT * FROM reviews ${where} ORDER BY created_at DESC, rowid DESC LIMIT ?`)
+    .all(...params, limit) as unknown as ReviewRow[];
+  const ids = rows.map((row) => row.id);
   const findingRows = db
     .prepare(
-      `SELECT findings.review_id, findings.kind, findings.severity FROM findings JOIN reviews ON reviews.id = findings.review_id
-       WHERE owner = ? AND repo = ? AND number = ? ORDER BY findings.position`,
+      `SELECT review_id, kind, severity FROM findings WHERE review_id IN (SELECT value FROM json_each(?)) ORDER BY position`,
     )
-    .all(owner, repo, number) as unknown as ({ review_id: string } & ListedReview["findings"][number])[];
+    .all(JSON.stringify(ids)) as unknown as ({ review_id: string } & ListedReview["findings"][number])[];
   const findings = Map.groupBy(findingRows, (finding) => finding.review_id);
   return rows.map((row) => ({
     id: row.id,
+    ...pullRequestOf(row),
     modelProvider: row.model_provider,
     model: row.model,
     headCommit: row.head_commit,
@@ -178,6 +206,14 @@ export function listReviews(db: Database, { owner, repo, number }: PullRequestRe
     status: "complete",
     findings: (findings.get(row.id) ?? []).map(({ kind, severity }) => ({ kind, severity })),
   }));
+}
+
+/** The Pull Request a saved Review is of, with its title if it was saved with one. */
+function pullRequestOf(row: ReviewRow): Pick<Review, "pullRequest" | "pullRequestTitle"> {
+  return {
+    pullRequest: { owner: row.owner, repo: row.repo, number: row.number },
+    ...(row.pull_request_title !== null && { pullRequestTitle: row.pull_request_title }),
+  };
 }
 
 function toFileOutcome(row: FileOutcomeRow): FileOutcome {

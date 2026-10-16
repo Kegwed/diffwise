@@ -1,6 +1,6 @@
 import { getGitHubApp, listModels } from "./api.ts";
 import { ConnectionStatus } from "./design-system/index.ts";
-import { REPOSITORIES_HREF } from "./route.ts";
+import { HOME_HREF } from "./route.ts";
 import { useLoaded } from "./useLoaded.ts";
 
 /**
@@ -15,7 +15,7 @@ export function AppHeader({ githubUnreachable }: { githubUnreachable: boolean })
     <header className="app-header">
       <div className="app-header-in">
         <h1 className="brand">
-          <a href={REPOSITORIES_HREF}>Diffwise</a>
+          <a href={HOME_HREF}>Diffwise</a>
         </h1>
         <ul className="connections" aria-label="Connections">
           {!githubApp.data && !githubApp.error && (

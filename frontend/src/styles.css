@@ -112,29 +112,6 @@ a {
   box-shadow: var(--focus-ring);
 }
 
-/* Rows: the Repositories */
-
-.rows {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.rows li {
-  padding: var(--space-3) var(--space-4);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
-}
-
-.rows a {
-  font-weight: 600;
-}
-
 .breadcrumb {
   display: flex;
   flex-wrap: wrap;
@@ -415,36 +392,214 @@ a {
   }
 }
 
-.pull-request-url {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin-bottom: var(--space-4);
+/* Home: the pasted Pull Request URL, then the Repositories beside the recent Reviews. */
+
+.github-connection {
+  padding: var(--space-4);
 }
 
-.pull-request-url label {
+.github-connection p {
+  max-width: 72ch;
+}
+
+.pull-request-url {
   display: flex;
-  flex: 1;
-  align-items: center;
-  gap: var(--space-2);
-  font: var(--type-label);
-  white-space: nowrap;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+.pull-request-url-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pull-request-url h2 {
+  margin: 0;
+  font: var(--type-title);
+  letter-spacing: var(--type-title-letter-spacing);
+}
+
+.pull-request-url form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.pull-request-url-field {
+  flex: 1 1 360px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
 }
 
 .pull-request-url input {
-  flex: 1;
-  min-width: 0;
-  font: var(--type-code);
-  height: 28px;
-  padding: 0 var(--space-2);
+  width: 100%;
+  box-sizing: border-box;
+  height: 32px;
+  padding: 0 var(--space-3);
+  font: var(--type-body);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-md);
   background: var(--surface);
   color: var(--ink);
 }
 
-.github-connection {
-  margin-bottom: var(--space-8);
+.pull-request-url input::placeholder {
+  color: var(--ink-muted);
+}
+
+.pull-request-url input[aria-invalid="true"] {
+  border-color: var(--status-error);
+}
+
+.pull-request-url-error {
+  margin: 0;
+  font: var(--type-caption);
+  color: var(--status-error);
+}
+
+.home-columns {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-6);
+}
+
+/* A card's note on what it holds: loading, nothing there, or why not. */
+.card-note {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+}
+
+.repositories {
+  flex: 1 1 300px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.repositories ul,
+.recent-reviews ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* Each Repository is a row, all of it leading to the Repository's page. */
+.repositories li {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  min-height: 56px;
+  box-sizing: border-box;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
+
+.repositories li:hover {
+  background: var(--low-soft);
+}
+
+.repositories li a {
+  color: var(--ink);
+  font: var(--type-label);
+  font-size: 14px;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.repositories li a::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+
+.repositories li a:hover {
+  text-decoration: underline;
+}
+
+.recent-reviews {
+  flex: 3.2 1 640px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* A recent Review's row: its columns wrap rather than squeeze. */
+.recent-review {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
+
+.recent-reviews li:last-child {
+  border-bottom: 0;
+}
+
+.recent-review-head {
+  padding-block: var(--space-2);
+}
+
+.recent-review > div {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+
+.recent-review-pull-request {
+  flex: 2 1 260px;
+  min-width: 0;
+}
+
+.recent-review-pull-request a {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.recent-review-model {
+  flex: 1.2 1 170px;
+  min-width: 0;
+}
+
+.recent-review-model code {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.recent-review-commit {
+  flex: 0 0 72px;
+}
+
+.recent-review-findings {
+  flex: 1.6 1 220px;
+  min-width: 0;
+}
+
+.recent-review > .recent-review-state {
+  flex: 1.3 1 190px;
+  min-width: 0;
+  gap: var(--space-1);
+}
+
+.recent-review-state .progress {
+  width: 100%;
+  max-width: 180px;
+  margin: 0;
+}
+
+@media (max-width: 900px) {
+  .recent-review-head {
+    display: none;
+  }
 }
 
 /* Cards */

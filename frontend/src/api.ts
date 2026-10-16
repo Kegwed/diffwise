@@ -6,6 +6,7 @@ import type {
   PullRequestDetail,
   PullRequestRef,
   OpenPullRequest,
+  RecentReview,
   RepositoryListing,
   RepositoryRef,
   Review,
@@ -15,12 +16,22 @@ import type {
 } from "@diffwise/shared";
 import { endsProgress } from "@diffwise/shared";
 
+/** What the backend said was wrong with a request, and the HTTP status it said it with (403: Diffwise can't read the Repository). */
+export class ApiRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
   const body = (await response.json().catch(() => undefined)) as T | ApiError | undefined;
   if (!response.ok) {
     const message = body && typeof body === "object" && "error" in body ? body.error : response.statusText;
-    throw new Error(message || `Request failed with status ${response.status}`);
+    throw new ApiRequestError(message || `Request failed with status ${response.status}`, response.status);
   }
   return body as T;
 }
@@ -45,6 +56,11 @@ export function getPullRequest(pullRequest: PullRequestRef): Promise<PullRequest
 /** The Pull Request's Reviews, newest first, each saying whether it's Outdated now. */
 export function listReviews(pullRequest: PullRequestRef): Promise<ReviewSummary[]> {
   return request(`${repositoryPath(pullRequest)}/pull-requests/${pullRequest.number}/reviews`);
+}
+
+/** The newest Reviews across all Repositories, running ones included, newest first. */
+export function listRecentReviews(): Promise<RecentReview[]> {
+  return request("/api/reviews");
 }
 
 export function getGitHubApp(): Promise<GitHubAppStatus> {

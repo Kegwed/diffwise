@@ -5,11 +5,12 @@ import {
   type ModelChoice,
   type PullRequestRef,
   type PullRequestSummary,
+  type RecentReview,
   type Review,
   type ReviewEvent,
   type ReviewSummary,
 } from "@diffwise/shared";
-import { getReview, listReviews, saveReview, type Database, type ListedReview } from "./db.ts";
+import { getReview, listRecentReviews, listReviews, saveReview, type Database, type ListedReview } from "./db.ts";
 import { ForgeAccessError, type Forge } from "./forge.ts";
 import { modelUnavailable, type ModelProvider, type ModelUnavailable } from "./model-provider.ts";
 import { startReview, type ReviewRun } from "./review-engine.ts";
@@ -49,6 +50,11 @@ export interface Reviews {
    * Request isn't read again; undefined if it has no Reviews.
    */
   latest(pullRequest: PullRequestSummary): ReviewSummary | undefined;
+  /**
+   * The RECENT_REVIEWS_LIMIT newest Reviews of any Pull Request, running, Unsaved and saved, newest first. Whether each is
+   * Outdated isn't worked out, so no Pull Request is read.
+   */
+  recent(): RecentReview[];
   /**
    * The Review's progress until it completes, turns out Unsaved, or `signal` aborts: first the Review as it stands, then
    * each change to it, ending with its completion or with it turning out Unsaved. Undefined if there's no such Review.
@@ -101,6 +107,18 @@ export function createReviews({ forge, modelProviders, db, modelCallTimeoutMs }:
       return newest && { ...newest, outdated: isOutdated(newest, pullRequest) };
     },
 
+    recent() {
+      const recent = [...inMemoryReviews(), ...listRecentReviews(db, RECENT_REVIEWS_LIMIT)]
+        .sort(newestFirst)
+        .slice(0, RECENT_REVIEWS_LIMIT);
+      return recent.map((review) => ({
+        pullRequest: review.pullRequest,
+        // Reviews saved before titles were kept have none.
+        ...(review.pullRequestTitle !== undefined && { pullRequestTitle: review.pullRequestTitle }),
+        ...listedSummary(review),
+      }));
+    },
+
     follow(id, signal) {
       const run = running.get(id);
       if (run) return run.events(signal);
@@ -109,13 +127,15 @@ export function createReviews({ forge, modelProviders, db, modelCallTimeoutMs }:
     },
   };
 
+  /** The Reviews only in memory, which a restart loses: running ones, and Unsaved ones. */
+  function inMemoryReviews(): Review[] {
+    return [...running.values()].map((run) => run.current());
+  }
+
   /** The Pull Request's Reviews, running, Unsaved and saved, newest first. */
   function reviewsOf(pullRequest: PullRequestRef): ReviewSummary[] {
-    const unsaved = [...running.values()]
-      .map((run) => run.current())
-      .filter((review) => isSamePullRequest(review.pullRequest, pullRequest))
-      .map((review) => ({ ...summary(review), ...(review.status === "running" && { progress: progress(review) }) }));
-    return [...unsaved, ...listReviews(db, pullRequest).map(summary)].sort(newestFirst);
+    const inMemory = inMemoryReviews().filter((review) => isSamePullRequest(review.pullRequest, pullRequest));
+    return [...inMemory, ...listReviews(db, pullRequest)].sort(newestFirst).map(listedSummary);
   }
 }
 
@@ -127,6 +147,14 @@ async function* completed(review: Review): AsyncGenerator<ReviewEvent> {
 
 function isSamePullRequest(a: PullRequestRef, b: PullRequestRef): boolean {
   return a.owner === b.owner && a.repo === b.repo && a.number === b.number;
+}
+
+/** How many Reviews the recent Reviews list at most. */
+const RECENT_REVIEWS_LIMIT = 20;
+
+/** A Review, running or saved, as a list of Reviews shows it, with its progress while it's running. */
+function listedSummary(review: Review | ListedReview): ReviewSummary {
+  return { ...summary(review), ...("pendingFiles" in review && review.status === "running" && { progress: progress(review) }) };
 }
 
 /** A Review, running or saved, as a list of Reviews shows it. */

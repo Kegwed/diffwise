@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import type { ApiError, ModelProviderListing, Review, ReviewEvent } from "@diffwise/shared";
+import type { ApiError, ModelProviderListing, RecentReview, Review, ReviewEvent } from "@diffwise/shared";
 import { createApp } from "../src/app.ts";
 import { fixtureForge } from "../src/fixture-forge.ts";
 import { ForgeAccessError } from "../src/forge.ts";
@@ -291,5 +291,31 @@ describe("Models", () => {
     const app = setupProviders();
 
     expect(await (await app.request("/api/models")).json()).toEqual([]);
+  });
+});
+
+describe("Recent Reviews", () => {
+  test("are the Reviews' recent ones, across all Repositories", async () => {
+    const recent: RecentReview[] = [
+      {
+        id: "r1",
+        pullRequest: pullRequestRef,
+        pullRequestTitle: "Add user lookup",
+        modelProvider: "Ollama",
+        model: "test-model",
+        headCommit: "abc1234",
+        createdAt: "2026-10-01T00:00:00.000Z",
+        status: "running",
+        findingCounts: { "bad-practice": 0, "security-issue": 0 },
+        severityCounts: { low: 0, medium: 0, high: 0, critical: 0 },
+        progress: { settled: 0, total: 1 },
+      },
+    ];
+    const app = setup(standInReviews({ recent: () => recent }));
+
+    const response = await app.request("/api/reviews");
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(recent);
   });
 });

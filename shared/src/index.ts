@@ -104,6 +104,8 @@ export interface PendingFile {
 export interface Review extends ModelChoice {
   id: string;
   pullRequest: PullRequestRef;
+  /** The Pull Request's title when the Review started; missing from Reviews saved before titles were kept. */
+  pullRequestTitle?: string;
   headCommit: string;
   /** When the Review was started. */
   createdAt: string;
@@ -139,6 +141,12 @@ export interface ReviewSummary extends ModelChoice {
    */
   outdated?: boolean;
 }
+
+/**
+ * A Review as the recent Reviews across all Repositories show it: with the Pull Request it's of. Never says whether it's
+ * Outdated, which would take asking GitHub about each Pull Request.
+ */
+export interface RecentReview extends Omit<ReviewSummary, "outdated">, Pick<Review, "pullRequest" | "pullRequestTitle"> {}
 
 export interface StartReviewRequest extends ModelChoice {
   pullRequest: PullRequestRef;

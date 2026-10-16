@@ -76,6 +76,7 @@ export function startReview(
   let review: Review = {
     id: randomUUID(),
     pullRequest: { owner, repo, number },
+    pullRequestTitle: pullRequest.title,
     headCommit,
     modelProvider: modelProvider.name,
     model,

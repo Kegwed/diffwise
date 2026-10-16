@@ -8,6 +8,7 @@ import type {
   OpenPullRequest,
   PullRequestDetail,
   PullRequestRef,
+  RecentReview,
   RepositoryListing,
   RepositoryRef,
   Review,
@@ -140,6 +141,9 @@ export function createApp({
     if (!listed) return c.json<ApiError>({ error: pullRequestNotFound(c.req.param()) }, 404);
     return c.json<ReviewSummary[]>(listed);
   });
+
+  // No Pull Request is read, so the recent Reviews don't say whether they're Outdated.
+  app.get("/api/reviews", (c) => c.json<RecentReview[]>(reviews.recent()));
 
   app.post("/api/reviews", async (c) => {
     const body = (await c.req.json().catch(() => undefined)) as Partial<StartReviewRequest> | undefined;

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { isOutdated, type PullRequestDetail, type PullRequestRef, type Review } from "@diffwise/shared";
 import { getPullRequest, startReview } from "./api.ts";
 import { Breadcrumb } from "./Breadcrumb.tsx";
+import { ReviewProgress } from "./ReviewProgress.tsx";
 import { Button, Notice, ReviewState } from "./design-system/index.ts";
 import { HeadCommit } from "./HeadCommit.tsx";
 import { ReviewView } from "./ReviewView.tsx";
@@ -141,16 +142,7 @@ function ReviewNotices({
     <div className="review-notices">
       {review.status === "running" && (
         <Notice role="status" title={`Reviewing: ${toReview} of ${total} files`}>
-          <div
-            className="progress"
-            role="progressbar"
-            aria-label="Review progress"
-            aria-valuemin={0}
-            aria-valuemax={total}
-            aria-valuenow={toReview}
-          >
-            <div className="progress-fill" style={{ width: `${total ? (toReview / total) * 100 : 0}%` }} />
-          </div>
+          <ReviewProgress settled={toReview} total={total} />
           <p>Findings appear as each file finishes. If Diffwise restarts, this Review is lost.</p>
         </Notice>
       )}
