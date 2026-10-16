@@ -1801,14 +1801,6 @@ describe("Home's Repositories", () => {
     expect(within(repositories).getByText("2 listed")).toBeInTheDocument();
   });
 
-  test("with no GitHub App created, there's nowhere to install it yet", async () => {
-    stubApi(review, modelListing, { "/api/github-app": () => Response.json({ status: "not-created" }) });
-    render(<App />);
-
-    const repositories = await screen.findByRole("region", { name: "Repositories" });
-    await within(repositories).findByRole("link", { name: "acme/shop" });
-    expect(within(repositories).queryByRole("link", { name: "Install on more Repositories" })).not.toBeInTheDocument();
-  });
 });
 
 describe("Home's recent Reviews", () => {
@@ -1904,12 +1896,252 @@ describe("Home's recent Reviews", () => {
     const list = await screen.findByRole("region", { name: "Recent Reviews" });
     expect(await within(list).findByText(/No Reviews yet/)).toBeInTheDocument();
   });
+});
 
-  test("that can't be listed say why", async () => {
-    stubApi(review, modelListing, { "/api/reviews": () => Response.json({ error: "database is locked" }, { status: 500 }) });
-    render(<App />);
+describe("Home before there's anything to show", () => {
+  const notCreated = { "/api/github-app": () => Response.json({ status: "not-created" }) };
+  const fixtureOnly = { "/api/repositories": () => Response.json({ repositories: [{ owner: "diffwise-fixtures", repo: "bookshop" }] }) };
 
-    const list = await screen.findByRole("region", { name: "Recent Reviews" });
-    expect(await within(list).findByRole("alert")).toHaveTextContent("database is locked");
+  describe("on first run, with no GitHub App created", () => {
+    test("says why to connect GitHub, offers to create the App, and lists what happens next", async () => {
+      stubApi(review, modelListing, notCreated);
+      render(<App />);
+
+      expect(await screen.findByRole("heading", { name: "Connect GitHub to review Pull Requests" })).toBeInTheDocument();
+      const create = screen.getByRole("button", { name: "Create GitHub App" });
+      expect(create).toHaveClass("dw-btn-primary");
+      expect(create.closest("form")).toHaveAttribute("action", "/api/github-app/new");
+      const steps = within(screen.getByRole("region", { name: "What happens next" })).getAllByRole("listitem");
+      expect(steps.map((step) => within(step).getByRole("heading").textContent)).toEqual([
+        "Create GitHub App",
+        "Install on Repositories",
+        "Review a Pull Request",
+      ]);
+      expect(screen.queryByRole("textbox", { name: "Paste a Pull Request URL" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("region", { name: "Recent Reviews" })).not.toBeInTheDocument();
+    });
+
+    test("lists each Model Provider's status, with an unavailable one's reason", async () => {
+      const reason = "Couldn't reach https://llm.example/v1: connection refused.";
+      stubApi(
+        review,
+        [
+          { modelProvider: "Ollama", status: "available", models: ["llama3.1:8b", "qwen2.5-coder:7b"] },
+          { modelProvider: "OpenAI-compatible", status: "unavailable", reason },
+        ],
+        notCreated,
+      );
+      render(<App />);
+
+      const card = await screen.findByRole("region", { name: "Model Providers" });
+      const [ollama, openai] = await within(card).findAllByRole("listitem");
+      expect(ollama).toHaveTextContent("OllamaConnected2 Models available");
+      expect(openai).toHaveTextContent(`OpenAI-compatibleUnavailable${reason}`);
+    });
+
+    test("skipping opens the fixture Pull Request, with no GitHub App", async () => {
+      const fixturePullRequest = { ...pullRequestDetail, owner: "diffwise-fixtures", repo: "bookshop", number: 1, title: "Add search" };
+      stubApi(review, modelListing, {
+        ...notCreated,
+        "/api/repositories/diffwise-fixtures/bookshop/pull-requests/1": () => Response.json(fixturePullRequest),
+        "/api/repositories/diffwise-fixtures/bookshop/pull-requests/1/reviews": () => Response.json([]),
+      });
+      render(<App />);
+
+      const skip = await screen.findByRole("link", { name: "Skip and try the fixture Pull Request" });
+      expect(skip).toHaveClass("dw-btn-secondary");
+      await userEvent.click(skip);
+
+      expect(window.location.hash).toBe("#/diffwise-fixtures/bookshop/pull/1");
+      expect(await screen.findByRole("heading", { name: "Add search" })).toBeInTheDocument();
+    });
+  });
+
+  describe("with the GitHub App installed nowhere", () => {
+    test("lists the fixture, then offers to install the App on Repositories", async () => {
+      stubApi(review, modelListing, fixtureOnly);
+      render(<App />);
+
+      const repositories = await screen.findByRole("region", { name: "Repositories" });
+      expect(await within(repositories).findByText("No installed Repositories yet")).toBeInTheDocument();
+      expect(within(repositories).getByRole("link", { name: "diffwise-fixtures/bookshop" })).toBeInTheDocument();
+      const install = within(repositories).getByRole("link", { name: "Install on Repositories" });
+      expect(install).toHaveAttribute("href", createdGitHubApp.installUrl);
+      expect(install).toHaveClass("dw-btn-primary");
+      expect(within(repositories).queryByRole("link", { name: "Install on more Repositories" })).not.toBeInTheDocument();
+    });
+
+    test("Recent Reviews says what will appear there", async () => {
+      stubApi(review, modelListing, fixtureOnly);
+      render(<App />);
+
+      const recent = await screen.findByRole("region", { name: "Recent Reviews" });
+      expect(await within(recent).findByText("No Reviews yet")).toBeInTheDocument();
+      expect(recent).toHaveTextContent("Each Review you run appears here");
+    });
+
+    test("the URL field can still be used, and says only installed Repositories' Pull Requests open", async () => {
+      stubApi(review, modelListing, fixtureOnly);
+      render(<App />);
+      await screen.findByText("No installed Repositories yet");
+
+      const field = screen.getByRole("textbox", { name: "Paste a Pull Request URL" });
+      await waitFor(() => expect(field).toBeEnabled());
+      expect(field).toHaveAccessibleDescription(
+        "Only Pull Requests from installed Repositories open. Until you install one, try diffwise-fixtures/bookshop.",
+      );
+    });
+
+    test("with Repositories installed, there's no such hint", async () => {
+      stubApi();
+      render(<App />);
+      await screen.findByRole("link", { name: "acme/shop" });
+
+      expect(screen.getByRole("textbox", { name: "Paste a Pull Request URL" })).not.toHaveAccessibleDescription();
+      expect(screen.queryByText("No installed Repositories yet")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("while loading", () => {
+    function renderLoading() {
+      const fetch = stubApi();
+      fetch.mockImplementation(() => new Promise<Response>(() => {}));
+      render(<App />);
+    }
+
+    test("the page is busy and says what it's loading, and the URL field can't be used yet", async () => {
+      renderLoading();
+
+      const status = await screen.findByRole("status");
+      expect(status).toHaveTextContent("Loading Repositories and Reviews…");
+      expect(status.closest("[aria-busy]")).toHaveAttribute("aria-busy", "true");
+      expect(screen.getByRole("textbox", { name: "Paste a Pull Request URL" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Open" })).toBeDisabled();
+      expect(await connections()).toEqual(["Checking GitHub", "Checking Model Providers"]);
+    });
+
+    test("both cards show skeleton rows, the Repositories after the fixture", async () => {
+      renderLoading();
+
+      const repositories = await screen.findByRole("region", { name: "Repositories" });
+      expect(within(repositories).getByRole("link", { name: "diffwise-fixtures/bookshop" })).toBeInTheDocument();
+      expect(repositories.querySelectorAll(".skeleton").length).toBeGreaterThan(0);
+      const recent = screen.getByRole("region", { name: "Recent Reviews" });
+      expect(recent.querySelectorAll(".skeleton").length).toBeGreaterThan(0);
+      expect(screen.queryByText("No installed Repositories yet")).not.toBeInTheDocument();
+      expect(screen.queryByText("No Reviews yet")).not.toBeInTheDocument();
+    });
+
+    test("once loaded, the page isn't busy and the skeletons are gone", async () => {
+      stubApi();
+      render(<App />);
+      await screen.findByRole("link", { name: "acme/shop" });
+      await screen.findByText("No Reviews yet");
+
+      await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
+      expect(document.querySelector("[aria-busy='true']")).not.toBeInTheDocument();
+      expect(document.querySelectorAll(".skeleton")).toHaveLength(0);
+      expect(screen.getByRole("textbox", { name: "Paste a Pull Request URL" })).toBeEnabled();
+    });
+  });
+
+  describe("when something couldn't be loaded", () => {
+    const unlisted = "GitHub replied 401 when listing the GitHub App's installations: Bad credentials";
+
+    test("the Repositories still list the fixture, then say why the installed ones couldn't be loaded", async () => {
+      stubApi(review, modelListing, {
+        "/api/repositories": () => Response.json({ repositories: [{ owner: "diffwise-fixtures", repo: "bookshop" }], unlisted }),
+      });
+      render(<App />);
+
+      const repositories = await screen.findByRole("region", { name: "Repositories" });
+      const alert = await within(repositories).findByRole("alert");
+      expect(alert).toHaveTextContent("Couldn't load installed Repositories");
+      expect(alert).toHaveTextContent(unlisted);
+      expect(within(alert).getByRole("button", { name: "Try again" })).toBeInTheDocument();
+      expect(within(repositories).getByRole("link", { name: "diffwise-fixtures/bookshop" })).toBeInTheDocument();
+      expect(within(repositories).queryByText("No installed Repositories yet")).not.toBeInTheDocument();
+      expect(within(repositories).queryByText(/listed$/)).not.toBeInTheDocument();
+    });
+
+    test("when only some installed Repositories couldn't be loaded, the rest are listed and the card says some are missing", async () => {
+      stubApi(review, modelListing, {
+        "/api/repositories": () =>
+          Response.json({ repositories: [{ owner: "diffwise-fixtures", repo: "bookshop" }, { owner: "acme", repo: "shop" }], unlisted }),
+      });
+      render(<App />);
+
+      const repositories = await screen.findByRole("region", { name: "Repositories" });
+      expect(await within(repositories).findByRole("alert")).toHaveTextContent("Couldn't load some installed Repositories");
+      expect(within(repositories).getByRole("link", { name: "acme/shop" })).toBeInTheDocument();
+    });
+
+    test("when the GitHub App's status couldn't be loaded, Home says why and doesn't claim the App is installed nowhere", async () => {
+      stubApi(review, modelListing, {
+        ...fixtureOnly,
+        "/api/github-app": () => Response.json({ error: "Couldn't read the GitHub App's credentials" }, { status: 500 }),
+      });
+      render(<App />);
+
+      expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't read the GitHub App's credentials");
+      await screen.findByText("No Reviews yet");
+      expect(screen.queryByText("No installed Repositories yet")).not.toBeInTheDocument();
+      expect(screen.getByRole("textbox", { name: "Paste a Pull Request URL" })).not.toHaveAccessibleDescription();
+    });
+
+    test("the fixture is listed even when the Repositories couldn't be asked for at all", async () => {
+      stubApi(review, modelListing, { "/api/repositories": () => Response.json({ error: "Diffwise isn't running" }, { status: 502 }) });
+      render(<App />);
+
+      const repositories = await screen.findByRole("region", { name: "Repositories" });
+      const alert = await within(repositories).findByRole("alert");
+      expect(alert).toHaveTextContent("Diffwise isn't running");
+      expect(within(repositories).getByRole("link", { name: "diffwise-fixtures/bookshop" })).toBeInTheDocument();
+    });
+
+    test("the Reviews say they couldn't be loaded, and where to look", async () => {
+      stubApi(review, modelListing, { "/api/reviews": () => Response.json({ error: "database is locked" }, { status: 500 }) });
+      render(<App />);
+
+      const recent = await screen.findByRole("region", { name: "Recent Reviews" });
+      const alert = await within(recent).findByRole("alert");
+      expect(alert).toHaveTextContent("Couldn't load Reviews");
+      expect(alert).toHaveTextContent("Check that the SQLite database file exists and that Diffwise has permission to read it");
+      expect(within(alert).getByRole("button", { name: "Try again" })).toBeInTheDocument();
+    });
+
+    test("trying the Repositories again asks for only them again", async () => {
+      let answer = () => Response.json({ repositories: [{ owner: "diffwise-fixtures", repo: "bookshop" }], unlisted });
+      const fetch = stubApi(review, modelListing, { "/api/repositories": () => answer() });
+      render(<App />);
+      const repositories = await screen.findByRole("region", { name: "Repositories" });
+      const tryAgain = await within(repositories).findByRole("button", { name: "Try again" });
+      await screen.findByText("No Reviews yet");
+      const before = fetch.mock.calls.length;
+
+      answer = () => Response.json({ repositories: [{ owner: "diffwise-fixtures", repo: "bookshop" }, { owner: "acme", repo: "shop" }] });
+      await userEvent.click(tryAgain);
+
+      expect(await within(repositories).findByRole("link", { name: "acme/shop" })).toBeInTheDocument();
+      expect(within(repositories).queryByRole("alert")).not.toBeInTheDocument();
+      expect(fetch.mock.calls.slice(before).map(([url]) => url)).toEqual(["/api/repositories"]);
+    });
+
+    test("trying the Reviews again asks for only them again", async () => {
+      let answer = () => Response.json({ error: "database is locked" }, { status: 500 });
+      const fetch = stubApi(review, modelListing, { "/api/reviews": () => answer() });
+      render(<App />);
+      const recent = await screen.findByRole("region", { name: "Recent Reviews" });
+      const tryAgain = await within(recent).findByRole("button", { name: "Try again" });
+      await screen.findByRole("link", { name: "acme/shop" });
+      const before = fetch.mock.calls.length;
+
+      answer = () => Response.json([]);
+      await userEvent.click(tryAgain);
+
+      expect(await within(recent).findByText("No Reviews yet")).toBeInTheDocument();
+      expect(within(recent).queryByRole("alert")).not.toBeInTheDocument();
+      expect(fetch.mock.calls.slice(before).map(([url]) => url)).toEqual(["/api/reviews"]);
+    });
   });
 });
