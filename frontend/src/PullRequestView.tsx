@@ -56,9 +56,9 @@ export function PullRequestView({ pullRequest }: { pullRequest: PullRequestRef }
               </p>
             )}
           </div>
-          <a className="dw-btn dw-btn-secondary dw-btn-md" href={githubHref(pullRequest)}>
+          <Button href={githubHref(pullRequest)}>
             Open on GitHub
-          </a>
+          </Button>
         </div>
         {!detail.data && !detail.error && <p>Loading…</p>}
         {detail.data && (

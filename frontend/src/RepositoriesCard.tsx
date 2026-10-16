@@ -1,7 +1,6 @@
 import { FIXTURE_REPOSITORY, isFixtureRepository, type RepositoryListing, type RepositoryRef } from "@diffwise/shared";
-import { CardMessage } from "./CardMessage.tsx";
+import { Button, EmptyState, Skeleton } from "./design-system/index.ts";
 import { repositoryHref } from "./route.ts";
-import { Skeleton } from "./Skeleton.tsx";
 import { isPending, type Reloaded } from "./useLoaded.ts";
 
 /** Each skeleton row's name and caption widths, so the rows don't read as one block. */
@@ -75,32 +74,31 @@ export function RepositoriesCard({
         </div>
       )}
       {state.state === "unlisted" && (
-        <CardMessage
+        <EmptyState
+          role="alert"
           title={state.someListed ? "Couldn't load some installed Repositories" : "Couldn't load installed Repositories"}
-          onRetry={onRetry}
+          action={<Button onClick={onRetry}>Try again</Button>}
         >
           {state.reason}
-        </CardMessage>
+        </EmptyState>
       )}
       {state.state === "installed-nowhere" && installUrl && (
-        <CardMessage
+        <EmptyState
           title="No installed Repositories yet"
           action={
-            // The primary Button's look on a link to GitHub.
-            <a className="dw-btn dw-btn-primary dw-btn-md" href={installUrl}>
+            <Button variant="primary" href={installUrl}>
               Install on Repositories
-            </a>
+            </Button>
           }
         >
           The GitHub App is created but isn't installed anywhere. Choose the Repositories Diffwise may read.
-        </CardMessage>
+        </EmptyState>
       )}
       {state.state === "listed" && installUrl && (
         <div className="card-note">
-          {/* The ghost Button's look on a link to GitHub. */}
-          <a className="dw-btn dw-btn-ghost dw-btn-sm" href={installUrl}>
+          <Button variant="ghost" size="sm" href={installUrl}>
             Install on more Repositories
-          </a>
+          </Button>
         </div>
       )}
     </section>

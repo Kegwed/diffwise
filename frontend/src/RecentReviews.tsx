@@ -1,12 +1,10 @@
 import type { RecentReview } from "@diffwise/shared";
-import { CardMessage } from "./CardMessage.tsx";
-import { ReviewState } from "./design-system/index.ts";
+import { Button, EmptyState, ReviewState, Skeleton } from "./design-system/index.ts";
 import { HeadCommit } from "./HeadCommit.tsx";
 import { relativeTime } from "./relativeTime.ts";
 import { reviewState, SeverityCounts } from "./ReviewList.tsx";
 import { ReviewProgress } from "./ReviewProgress.tsx";
 import { reviewHref } from "./route.ts";
-import { Skeleton } from "./Skeleton.tsx";
 import { isPending, type Reloaded } from "./useLoaded.ts";
 
 /** The Pull Request column's width in each skeleton row, so the rows don't read as one block. */
@@ -53,16 +51,16 @@ export function RecentReviews({ recent, onRetry }: { recent: Reloaded<RecentRevi
         </div>
       )}
       {!pending && recent.error && (
-        <CardMessage title="Couldn't load Reviews" onRetry={onRetry}>
+        <EmptyState role="alert" title="Couldn't load Reviews" action={<Button onClick={onRetry}>Try again</Button>}>
           Diffwise couldn't read its saved Reviews. Check that the SQLite database file exists and that Diffwise has
           permission to read it, then try again. Running Reviews are not affected.
-        </CardMessage>
+        </EmptyState>
       )}
       {!pending && recent.data?.length === 0 && (
-        <CardMessage title="No Reviews yet">
+        <EmptyState title="No Reviews yet">
           Each Review you run appears here with its Pull Request, the Model that ran it, the head commit and its Findings.
           Paste a Pull Request URL above, or open the fixture Repository, to start one.
-        </CardMessage>
+        </EmptyState>
       )}
       {!pending && recent.data && recent.data.length > 0 && (
         <ul aria-labelledby="recent-reviews">

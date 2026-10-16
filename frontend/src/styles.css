@@ -567,53 +567,8 @@ a {
   padding: var(--space-3) var(--space-4);
 }
 
-/* What a card says when it has nothing to list, or couldn't load it: a heading, why, and what to do about it. */
-.card-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--space-3);
-  padding: var(--space-6) var(--space-4);
-}
-
-.card-empty p {
-  margin: 0;
-  max-width: 60ch;
-  color: var(--ink-muted);
-}
-
-.card-empty .card-empty-title {
-  font: var(--type-heading);
-  color: var(--ink);
-}
-
-.card-empty a {
-  text-decoration: none;
-}
-
 .page > .home-status {
   margin: 0;
-}
-
-/* A placeholder for what's still loading. The pulse says it's loading; with reduced motion it holds still. */
-.skeleton {
-  display: block;
-  max-width: 100%;
-  background: var(--surface-sunken);
-  border-radius: var(--radius-sm);
-  animation: skeleton-pulse 1.4s ease-in-out infinite;
-}
-
-@keyframes skeleton-pulse {
-  50% {
-    opacity: 0.55;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .skeleton {
-    animation: none;
-  }
 }
 
 .repository-skeleton {

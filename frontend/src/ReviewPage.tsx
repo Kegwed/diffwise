@@ -63,9 +63,9 @@ export function ReviewPage({ pullRequest, reviewId }: { pullRequest: PullRequest
               {detail.data && ` · ${detail.data.headBranch} into ${detail.data.baseBranch}`}
             </p>
           </div>
-          <a className="dw-btn dw-btn-secondary dw-btn-md" href={githubHref(pullRequest)}>
+          <Button href={githubHref(pullRequest)}>
             Open on GitHub
-          </a>
+          </Button>
         </div>
         {review && (
           <dl className="head-details">

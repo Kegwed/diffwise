@@ -27,10 +27,8 @@ export function FirstRun() {
               Create GitHub App
             </Button>
           </form>
-          {/* The Secondary Button's look on a link: the fixture's Pull Requests are served without GitHub. */}
-          <a className="dw-btn dw-btn-secondary dw-btn-md" href={pullRequestHref({ ...FIXTURE_REPOSITORY, number: 1 })}>
-            Skip and try the fixture Pull Request
-          </a>
+          {/* The fixture's Pull Requests are served without GitHub. */}
+          <Button href={pullRequestHref({ ...FIXTURE_REPOSITORY, number: 1 })}>Skip and try the fixture Pull Request</Button>
         </div>
         <p className="caption">
           GitHub asks you to confirm the App's name and permissions. The fixture, {FIXTURE_REPOSITORY.owner}/

@@ -2025,9 +2025,9 @@ describe("Home before there's anything to show", () => {
 
       const repositories = await screen.findByRole("region", { name: "Repositories" });
       expect(within(repositories).getByRole("link", { name: "diffwise-fixtures/bookshop" })).toBeInTheDocument();
-      expect(repositories.querySelectorAll(".skeleton").length).toBeGreaterThan(0);
+      expect(repositories.querySelectorAll(".dw-skel").length).toBeGreaterThan(0);
       const recent = screen.getByRole("region", { name: "Recent Reviews" });
-      expect(recent.querySelectorAll(".skeleton").length).toBeGreaterThan(0);
+      expect(recent.querySelectorAll(".dw-skel").length).toBeGreaterThan(0);
       expect(screen.queryByText("No installed Repositories yet")).not.toBeInTheDocument();
       expect(screen.queryByText("No Reviews yet")).not.toBeInTheDocument();
     });
@@ -2040,7 +2040,7 @@ describe("Home before there's anything to show", () => {
 
       await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
       expect(document.querySelector("[aria-busy='true']")).not.toBeInTheDocument();
-      expect(document.querySelectorAll(".skeleton")).toHaveLength(0);
+      expect(document.querySelectorAll(".dw-skel")).toHaveLength(0);
       expect(screen.getByRole("textbox", { name: "Paste a Pull Request URL" })).toBeEnabled();
     });
   });

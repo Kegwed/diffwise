@@ -1,7 +1,20 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, test, vi } from "vitest";
-import { Badge, Button, ConnectionStatus, Finding, Menu, MenuGroup, MenuItem, Notice, ReviewState, Severity } from "../src/design-system/index.ts";
+import {
+  Badge,
+  Button,
+  ConnectionStatus,
+  EmptyState,
+  Finding,
+  Menu,
+  MenuGroup,
+  MenuItem,
+  Notice,
+  ReviewState,
+  Severity,
+  Skeleton,
+} from "../src/design-system/index.ts";
 
 test.each([
   ["critical", "Critical", 4],
@@ -84,6 +97,48 @@ test("Button is secondary and md by default, and a button that doesn't submit", 
   const button = screen.getByRole("button", { name: "Run review" });
   expect(button).toHaveClass("dw-btn", "dw-btn-secondary", "dw-btn-md");
   expect(button).toHaveAttribute("type", "button");
+});
+
+test("a Button with href is a link that looks like a Button, with no button type", () => {
+  render(
+    <Button variant="primary" href="https://github.com/apps/diffwise/installations/new">
+      Install on Repositories
+    </Button>,
+  );
+
+  const link = screen.getByRole("link", { name: "Install on Repositories" });
+  expect(link).toHaveAttribute("href", "https://github.com/apps/diffwise/installations/new");
+  expect(link).toHaveClass("dw-btn", "dw-btn-primary", "dw-btn-md");
+  expect(link).not.toHaveAttribute("type");
+  expect(screen.queryByRole("button")).not.toBeInTheDocument();
+});
+
+test("an EmptyState says what's missing and why, then offers its one action", async () => {
+  const onRetry = vi.fn();
+  render(
+    <EmptyState role="alert" title="Couldn't load Reviews" action={<Button onClick={onRetry}>Try again</Button>}>
+      Check that the SQLite database file exists.
+    </EmptyState>,
+  );
+
+  const empty = screen.getByRole("alert");
+  expect(empty).toHaveTextContent(/^Couldn't load ReviewsCheck that the SQLite database file exists\.Try again$/);
+  await userEvent.click(within(empty).getByRole("button", { name: "Try again" }));
+  expect(onRetry).toHaveBeenCalledOnce();
+});
+
+test("a Skeleton is hidden from screen readers and sized like what it stands in for: full width and a line of text by default", () => {
+  const { container } = render(
+    <>
+      <Skeleton />
+      <Skeleton width="45%" height={10} />
+    </>,
+  );
+
+  const [plain, sized] = [...container.querySelectorAll(".dw-skel")] as HTMLElement[];
+  expect(plain).toHaveAttribute("aria-hidden", "true");
+  expect(plain!.style).toMatchObject({ width: "100%", height: "14px" });
+  expect(sized!.style).toMatchObject({ width: "45%", height: "10px" });
 });
 
 test("Badge is neutral by default", () => {
